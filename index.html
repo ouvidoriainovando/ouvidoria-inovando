@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Plataforma Ouvidoria Inovando da Escola Inove. Envie suas sugestões, reclamações, elogios e participe ativamente da construção de uma escola melhor.">
+  <title>Ouvidoria Inovando | Escola Inove</title>
+  
+  <!-- Estilos Globais e Customizados -->
+  <link rel="stylesheet" href="style.css">
+  
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+
+  <!-- Elementos de Splendor Visual / Gráficos de Fundo -->
+  <div class="bg-decorations">
+    <div class="bg-circle bg-circle-1"></div>
+    <div class="bg-circle bg-circle-2"></div>
+  </div>
+
+  <!-- Container Geral onde a SPA será Renderizada -->
+  <div id="root"></div>
+
+  <!-- Container para Toasts/Notificações Flutuantes -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- ================= MODAIS DA APLICAÇÃO ================= -->
+
+  <!-- 2. Modal de Criação / Edição de Enquetes (Administrador) -->
+  <div id="poll-modal" class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="poll-modal-title" class="modal-title"><i data-lucide="vote"></i> Nova Enquete</h3>
+        <button class="close-modal-btn" onclick="closePollModal()">&times;</button>
+      </div>
+      <form id="poll-form" onsubmit="savePoll(event)">
+        <div class="form-group">
+          <label for="poll-question">Pergunta / Título da Enquete</label>
+          <div class="input-wrapper">
+            <i data-lucide="help-circle"></i>
+            <input type="text" id="poll-question" placeholder="Ex: Qual palestra você prefere?" required>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="poll-days-left">Dias Restantes para Encerramento</label>
+          <div class="input-wrapper">
+            <i data-lucide="calendar"></i>
+            <input type="number" id="poll-days-left" placeholder="Ex: 7" min="1" required>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Opções de Resposta</label>
+          <div id="poll-options-container">
+            <!-- Opções inseridas dinamicamente pelo JavaScript -->
+          </div>
+          <button type="button" class="btn btn-secondary" onclick="addPollOptionRow()" style="margin-top: 10px; font-size: 13px; padding: 10px 15px;">
+            <i data-lucide="plus"></i> Adicionar Opção
+          </button>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closePollModal()">Cancelar</button>
+          <button type="submit" class="btn">Salvar Enquete</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 3. Modal de Cadastro de Novos Usuários (Administrador) -->
+  <div id="user-modal" class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title"><i data-lucide="user-plus"></i> Cadastrar Novo Usuário</h3>
+        <button class="close-modal-btn" onclick="closeUserModal()">&times;</button>
+      </div>
+      <form onsubmit="saveUser(event)">
+        <div class="form-group">
+          <label for="user-username">Matrícula ou Login Escolar</label>
+          <div class="input-wrapper">
+            <i data-lucide="hash"></i>
+            <input type="text" id="user-username" placeholder="Ex: 20261102" required>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="user-name">Nome Completo</label>
+          <div class="input-wrapper">
+            <i data-lucide="user"></i>
+            <input type="text" id="user-name" placeholder="Ex: Juliana Santos de Melo" required>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="user-role">Função / Nível de Acesso</label>
+          <select id="user-role" class="filter-select" style="width: 100%; height: 50px; padding-left: 15px;">
+            <option value="aluno">Aluno / Comunidade</option>
+            <option value="admin">Administrador / Coordenação</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="user-password">Senha Provisória</label>
+          <div class="input-wrapper">
+            <i data-lucide="lock"></i>
+            <input type="text" id="user-password" placeholder="Ex: inove123" required>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeUserModal()">Cancelar</button>
+          <button type="submit" class="btn">Cadastrar Usuário</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 4. Modal de Compartilhamento via QR Code -->
+  <div id="share-modal" class="modal-overlay">
+    <div class="modal-card" style="max-width: 440px;">
+      <div class="modal-header">
+        <h3 class="modal-title"><i data-lucide="share-2"></i> Compartilhar Ouvidoria</h3>
+        <button class="close-modal-btn" onclick="closeShareModal()">&times;</button>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; text-align: center; gap: 20px; padding: 10px 0;">
+        <p style="color: var(--text-secondary); font-size: 14px;">Divulgue o canal de escuta da nossa escola. Aponte a câmera do celular para o QR Code abaixo:</p>
+        <div class="qr-box" style="padding: 16px; background: #FFFFFF; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); border: 1px solid rgba(0,0,0,0.05); display: flex; flex-direction: column; align-items: center;">
+          <canvas id="modal-qr-canvas"></canvas>
+          <div class="qr-label" style="font-size: 10px; font-weight: 700; color: #1A202C; margin-top: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Escaneie para Acessar</div>
+        </div>
+        <div style="display: flex; gap: 10px; width: 100%;">
+          <button class="btn" onclick="copyAppUrl()" style="flex: 1;">
+            <i data-lucide="copy"></i> Copiar Link
+          </button>
+          <button class="btn btn-secondary" onclick="shareApp()" style="flex: 1; border-color: var(--primary); color: var(--primary);">
+            <i data-lucide="share-2"></i> Compartilhar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. Modal de Edição de Manifestações (Administrador) -->
+  <div id="manifestation-modal" class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title"><i data-lucide="edit-3"></i> Editar Manifestação</h3>
+        <button class="close-modal-btn" onclick="closeManifestationModal()">&times;</button>
+      </div>
+      <form id="manifestation-form" onsubmit="saveManifestationEdit(event)">
+        <div class="form-group">
+          <label for="manifestation-title">Assunto / Título</label>
+          <div class="input-wrapper">
+            <i data-lucide="heading"></i>
+            <input type="text" id="manifestation-title" required>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="manifestation-category">Tipo de Manifestação</label>
+          <select id="manifestation-category" class="filter-select" style="width: 100%; height: 50px; padding-left: 15px;" onchange="adjustManifestationFormFields()">
+            <option value="sugestao">Sugestão</option>
+            <option value="reclamacao">Reclamação</option>
+            <option value="elogio">Elogio</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="manifestation-class">Turma</label>
+          <div class="input-wrapper">
+            <i data-lucide="graduation-cap"></i>
+            <input type="text" id="manifestation-class" placeholder="Ex: 3º Ano A, 1001" required>
+          </div>
+        </div>
+
+        <!-- Campos Contextuais -->
+        <div id="manifestation-context-fields">
+          <!-- Gerados dinamicamente via JS -->
+        </div>
+
+        <div class="form-group">
+          <label for="manifestation-status">Status</label>
+          <select id="manifestation-status" class="filter-select" style="width: 100%; height: 50px; padding-left: 15px;">
+            <option value="pending">Pendente</option>
+            <option value="analysis">Em Análise</option>
+            <option value="resolved">Resolvido</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="manifestation-description">Descrição Detalhada</label>
+          <textarea id="manifestation-description" required style="min-height: 120px; padding-left: 16px;"></textarea>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeManifestationModal()">Cancelar</button>
+          <button type="submit" class="btn">Salvar Alterações</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 6. Modal de Confirmação de Exclusão de Usuário -->
+  <div id="delete-user-modal" class="modal-overlay">
+    <div class="modal-card" style="max-width: 440px; text-align: center;">
+      <div class="modal-header">
+        <h3 class="modal-title" style="color: var(--primary);"><i data-lucide="user-x"></i> Remover Usuário</h3>
+        <button class="close-modal-btn" onclick="closeDeleteUserModal()">&times;</button>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 15px; padding: 10px 0;">
+        <p style="color: var(--text-main); font-size: 16px; line-height: 1.5; font-weight: 600; margin: 0;">
+          Você tem certeza que vai remover este usuário do site?
+        </p>
+        <p style="color: var(--text-secondary); font-size: 13px; margin: 0;" id="delete-user-info"></p>
+        <div class="modal-actions" style="display: flex; gap: 10px; margin-top: 10px;">
+          <button type="button" class="btn btn-secondary" onclick="closeDeleteUserModal()" style="flex: 1;">Não, quero</button>
+          <button type="button" class="btn" onclick="confirmDeleteUser()" style="flex: 1; background-color: var(--primary); color: #FFFFFF;">Sim, eu quero</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts da Aplicação -->
+  <script src="qrcode.js"></script>
+  <script src="app.js"></script>
+
+</body>
+</html>
