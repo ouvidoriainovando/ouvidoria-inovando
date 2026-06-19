@@ -249,7 +249,7 @@ function migrateManifestationsComments() {
 migrateManifestationsComments();
 
 // --- VARIÁVEIS DE ESTADO DA SESSÃO ---
-let currentUser = JSON.parse(sessionStorage.getItem('inovando_session')) || null;
+let currentUser = JSON.parse(localStorage.getItem('inovando_session')) || null;
 let currentView = currentUser ? 'home' : 'login';
 let userToDelete = null;
 let theme = localStorage.getItem('inovando_theme') || 'light';
@@ -262,7 +262,7 @@ if (currentUser) {
     if (dbUser.role !== currentUser.role || dbUser.name !== currentUser.name) {
       currentUser.role = dbUser.role;
       currentUser.name = dbUser.name;
-      sessionStorage.setItem('inovando_session', JSON.stringify(currentUser));
+      localStorage.setItem('inovando_session', JSON.stringify(currentUser));
     }
   }
 }
@@ -350,7 +350,7 @@ function handleLogin(e) {
       name: user.name,
       role: user.role
     };
-    sessionStorage.setItem('inovando_session', JSON.stringify(currentUser));
+    localStorage.setItem('inovando_session', JSON.stringify(currentUser));
     currentView = 'home';
     showToast(`Bem-vindo, ${user.name}!`);
     renderApp();
@@ -361,7 +361,7 @@ function handleLogin(e) {
 
 function handleLogout() {
   currentUser = null;
-  sessionStorage.removeItem('inovando_session');
+  localStorage.removeItem('inovando_session');
   currentView = 'login';
   showToast('Sessão encerrada com sucesso.');
   renderApp();
@@ -995,13 +995,16 @@ function openShareModal() {
   modal.classList.add('active');
   
   setTimeout(() => {
-    const canvas = document.getElementById('modal-qr-canvas');
-    if (canvas && typeof QRCode !== 'undefined') {
-      QRCode.generate(window.location.href || 'https://ouvidoria.escolainove.com.br', canvas, {
-        size: 160,
-        padding: 8,
+    const container = document.getElementById('modal-qr-container');
+    if (container && typeof QRCode !== 'undefined') {
+      container.innerHTML = '';
+      new QRCode(container, {
+        text: window.location.href || 'https://ouvidoria.escolainove.com.br',
+        width: 160,
+        height: 160,
         colorDark: '#0b0f19',
-        colorLight: '#ffffff'
+        colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.M
       });
     }
   }, 100);
@@ -1133,7 +1136,7 @@ function uploadProfilePic(event) {
     }
     
     currentUser.profilePic = base64Image;
-    sessionStorage.setItem('inovando_session', JSON.stringify(currentUser));
+    localStorage.setItem('inovando_session', JSON.stringify(currentUser));
     
     showToast('Foto de perfil atualizada!');
     renderApp();
@@ -1157,7 +1160,7 @@ function removeProfilePic(event) {
   }
   
   delete currentUser.profilePic;
-  sessionStorage.setItem('inovando_session', JSON.stringify(currentUser));
+  localStorage.setItem('inovando_session', JSON.stringify(currentUser));
   
   showToast('Foto de perfil removida.');
   renderApp();

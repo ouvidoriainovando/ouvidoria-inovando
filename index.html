@@ -6,6 +6,10 @@
   <meta name="description" content="Plataforma Ouvidoria Inovando da Escola Inove. Envie suas sugestões, reclamações, elogios e participe ativamente da construção de uma escola melhor.">
   <title>Ouvidoria Inovando | Escola Inove</title>
   
+  <!-- Icone da Aba do Navegador (Favicon) -->
+  <link rel="shortcut icon" href="favicon.png" type="image/png">
+  <link rel="icon" href="favicon.png" type="image/png">
+  
   <!-- Estilos Globais e Customizados -->
   <link rel="stylesheet" href="style.css">
   
@@ -128,7 +132,7 @@
       <div style="display: flex; flex-direction: column; align-items: center; text-align: center; gap: 20px; padding: 10px 0;">
         <p style="color: var(--text-secondary); font-size: 14px;">Divulgue o canal de escuta da nossa escola. Aponte a câmera do celular para o QR Code abaixo:</p>
         <div class="qr-box" style="padding: 16px; background: #FFFFFF; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); border: 1px solid rgba(0,0,0,0.05); display: flex; flex-direction: column; align-items: center;">
-          <canvas id="modal-qr-canvas"></canvas>
+          <div id="modal-qr-container" style="display: flex; justify-content: center; align-items: center; width: 160px; height: 160px; overflow: hidden; background: #ffffff; border-radius: 8px;"></div>
           <div class="qr-label" style="font-size: 10px; font-weight: 700; color: #1A202C; margin-top: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Escaneie para Acessar</div>
         </div>
         <div style="display: flex; gap: 10px; width: 100%;">
