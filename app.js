@@ -58,6 +58,17 @@ const SEED_MANIFESTATIONS = [
   }
 ];
 
+const TURMAS_OPTIONS_HTML = `
+  <option value="" disabled selected>Selecione sua turma...</option>
+  <option value="6º Ano">6º Ano</option>
+  <option value="7º Ano">7º Ano</option>
+  <option value="8º Ano">8º Ano</option>
+  <option value="9º Ano">9º Ano</option>
+  <option value="1º Ano Ensino Médio">1º Ano Ensino Médio</option>
+  <option value="2º Ano Ensino Médio">2º Ano Ensino Médio</option>
+  <option value="3º Ano Ensino Médio">3º Ano Ensino Médio</option>
+`;
+
 const SEED_POLLS = [
   {
     id: 'poll_1',
@@ -130,27 +141,146 @@ function restoreDefaultLogo() {
   renderApp();
 }
 
-// --- GERENCIAMENTO DE ESTADO / MOCK DB ---
+// --- GERENCIAMENTO DE ESTADO E SINCRONIZAÇÃO CENTRAL (FIREBASE) ---
+let firebaseEnabled = false;
+let dbRef = null;
+let firebaseURL = localStorage.getItem('inovando_firebase_url') || '';
+
+// Cache local sincronizado
+const LOCAL_CACHE = {
+  users: JSON.parse(localStorage.getItem('inovando_users')) || SEED_USERS,
+  manifestations: JSON.parse(localStorage.getItem('inovando_manifestations')) || SEED_MANIFESTATIONS,
+  polls: JSON.parse(localStorage.getItem('inovando_polls')) || SEED_POLLS,
+  logo: localStorage.getItem('inovando_logo') || null,
+  theme: localStorage.getItem('inovando_theme') || 'light'
+};
+
 const DB = {
   get: (key, fallback) => {
+    if (LOCAL_CACHE[key] !== undefined && LOCAL_CACHE[key] !== null) {
+      return LOCAL_CACHE[key];
+    }
     const val = localStorage.getItem('inovando_' + key);
     return val ? JSON.parse(val) : fallback;
   },
   set: (key, val) => {
+    LOCAL_CACHE[key] = val;
     localStorage.setItem('inovando_' + key, JSON.stringify(val));
+    saveToFirebase(key, val);
   },
   reset: () => {
     localStorage.removeItem('inovando_users');
     localStorage.removeItem('inovando_manifestations');
     localStorage.removeItem('inovando_polls');
-    location.reload();
+    localStorage.removeItem('inovando_logo');
+    localStorage.removeItem('inovando_theme');
+    
+    if (firebaseEnabled && dbRef) {
+      dbRef.set({
+        users: SEED_USERS,
+        manifestations: SEED_MANIFESTATIONS,
+        polls: SEED_POLLS,
+        logo: null,
+        theme: 'light'
+      }).then(() => {
+        location.reload();
+      }).catch(err => {
+        console.error("Erro ao resetar banco Firebase:", err);
+        location.reload();
+      });
+    } else {
+      location.reload();
+    }
   }
 };
+
+// Funções de Inicialização e Sincronização
+function initFirebase() {
+  if (!firebaseURL) {
+    firebaseEnabled = false;
+    console.log("Firebase Central DB: URL não configurada. Usando armazenamento local.");
+    return;
+  }
+  
+  try {
+    if (typeof firebase === 'undefined') {
+      firebaseEnabled = false;
+      console.warn("Firebase Central DB: SDK do Firebase não carregado.");
+      return;
+    }
+    
+    if (firebase.apps.length > 0) {
+      firebase.app().delete();
+    }
+    
+    firebase.initializeApp({
+      databaseURL: firebaseURL
+    });
+    
+    dbRef = firebase.database().ref();
+    firebaseEnabled = true;
+    console.log("Firebase Central DB: Inicializado em " + firebaseURL);
+    
+    dbRef.on('value', (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        console.log("Firebase Central DB: Dados recebidos e sincronizados com sucesso.");
+        if (data.users) LOCAL_CACHE.users = data.users;
+        if (data.manifestations) LOCAL_CACHE.manifestations = data.manifestations;
+        if (data.polls) LOCAL_CACHE.polls = data.polls;
+        if (data.logo !== undefined) LOCAL_CACHE.logo = data.logo;
+        if (data.theme) LOCAL_CACHE.theme = data.theme;
+        
+        // Atualiza o localStorage local como backup offline
+        localStorage.setItem('inovando_users', JSON.stringify(LOCAL_CACHE.users));
+        localStorage.setItem('inovando_manifestations', JSON.stringify(LOCAL_CACHE.manifestations));
+        localStorage.setItem('inovando_polls', JSON.stringify(LOCAL_CACHE.polls));
+        if (LOCAL_CACHE.logo) localStorage.setItem('inovando_logo', LOCAL_CACHE.logo);
+        else localStorage.removeItem('inovando_logo');
+        localStorage.setItem('inovando_theme', LOCAL_CACHE.theme);
+        
+        renderApp();
+      } else {
+        // Database vazio, inicializa com os dados locais atuais
+        console.log("Firebase Central DB: Banco vazio. Enviando dados locais atuais...");
+        dbRef.set({
+          users: LOCAL_CACHE.users,
+          manifestations: LOCAL_CACHE.manifestations,
+          polls: LOCAL_CACHE.polls,
+          logo: LOCAL_CACHE.logo || null,
+          theme: LOCAL_CACHE.theme
+        });
+      }
+    }, (error) => {
+      console.error("Firebase Central DB: Erro de leitura:", error);
+      firebaseEnabled = false;
+      showToast("Falha na sincronização do banco. Operando no modo local.", "error");
+      renderApp();
+    });
+    
+  } catch (err) {
+    console.error("Firebase Central DB: Falha ao inicializar:", err);
+    firebaseEnabled = false;
+    renderApp();
+  }
+}
+
+function saveToFirebase(key, val) {
+  if (firebaseEnabled && dbRef) {
+    dbRef.child(key).set(val).catch(err => {
+      console.error(`Firebase Central DB: Erro ao salvar ${key}:`, err);
+      showToast("Erro ao sincronizar com o banco central. Salvando localmente.", "error");
+    });
+  }
+}
 
 // Inicialização segura
 if (!localStorage.getItem('inovando_users')) DB.set('users', SEED_USERS);
 if (!localStorage.getItem('inovando_manifestations')) DB.set('manifestations', SEED_MANIFESTATIONS);
 if (!localStorage.getItem('inovando_polls')) DB.set('polls', SEED_POLLS);
+
+// Inicializar Conexão Firebase
+initFirebase();
 
 // Migração segura para garantir que os administradores paulo e julia existam com senhas atualizadas
 function migrateUserData() {
@@ -603,6 +733,18 @@ function openManifestationModal(id) {
 
       const classInput = document.getElementById('manifestation-class');
       if (classInput) {
+        const legacyOption = classInput.querySelector('.legacy-option');
+        if (legacyOption) {
+          legacyOption.remove();
+        }
+        const exists = Array.from(classInput.options).some(opt => opt.value === item.turma);
+        if (!exists && item.turma) {
+          const opt = document.createElement('option');
+          opt.value = item.turma;
+          opt.textContent = item.turma;
+          opt.className = 'legacy-option';
+          classInput.appendChild(opt);
+        }
         classInput.value = item.turma || '';
       }
 
@@ -1571,8 +1713,10 @@ function renderSugestao() {
           <div class="form-group" style="margin-bottom: 20px;">
             <label for="sugestao-class">Turma</label>
             <div class="input-wrapper">
-              <i data-lucide="graduation-cap"></i>
-              <input type="text" id="sugestao-class" placeholder="Ex: 3º Ano A, 1001" required>
+              <i data-lucide="graduation-cap" style="left: 16px;"></i>
+              <select id="sugestao-class" class="filter-select" style="width: 100%; height: 50px; padding-left: 44px;" required>
+                ${TURMAS_OPTIONS_HTML}
+              </select>
             </div>
           </div>
 
@@ -1630,8 +1774,10 @@ function renderReclamacao() {
           <div class="form-group" style="margin-bottom: 20px;">
             <label for="reclamacao-class">Turma</label>
             <div class="input-wrapper">
-              <i data-lucide="graduation-cap"></i>
-              <input type="text" id="reclamacao-class" placeholder="Ex: 3º Ano A, 1001" required>
+              <i data-lucide="graduation-cap" style="left: 16px;"></i>
+              <select id="reclamacao-class" class="filter-select" style="width: 100%; height: 50px; padding-left: 44px;" required>
+                ${TURMAS_OPTIONS_HTML}
+              </select>
             </div>
           </div>
 
@@ -1700,8 +1846,10 @@ function renderElogio() {
           <div class="form-group" style="margin-bottom: 20px;">
             <label for="elogio-class">Turma</label>
             <div class="input-wrapper">
-              <i data-lucide="graduation-cap"></i>
-              <input type="text" id="elogio-class" placeholder="Ex: 3º Ano A, 1001" required>
+              <i data-lucide="graduation-cap" style="left: 16px;"></i>
+              <select id="elogio-class" class="filter-select" style="width: 100%; height: 50px; padding-left: 44px;" required>
+                ${TURMAS_OPTIONS_HTML}
+              </select>
             </div>
           </div>
 
@@ -2437,9 +2585,151 @@ function renderSettings() {
       </div>
       ` : ''}
 
+      ${getFirebaseSettingsCardHtml()}
+
     </div>
   `;
   lucide.createIcons();
+}
+
+function getFirebaseSettingsCardHtml() {
+  if (currentUser.role !== 'admin') return '';
+  
+  return `
+    <div class="settings-card">
+      <h3>Banco de Dados Central (Sincronização)</h3>
+      <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 15px; line-height: 1.5;">
+        Conecte a Ouvidoria a um banco de dados centralizado no Firebase para que enquetes e sugestões sejam compartilhadas e sincronizadas em tempo real em todos os celulares, tablets e computadores.
+      </p>
+      
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 20px; font-size: 14px;">
+        <strong>Status da Conexão:</strong>
+        <span style="display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: ${firebaseEnabled ? 'var(--elogio)' : 'var(--reclamacao)'}">
+          <span style="width: 10px; height: 10px; border-radius: 50%; background-color: ${firebaseEnabled ? 'var(--elogio)' : 'var(--reclamacao)'}; display: inline-block;"></span>
+          ${firebaseEnabled ? 'Conectado (Centralizado)' : 'Modo Offline (Local)'}
+        </span>
+      </div>
+
+      <form onsubmit="saveFirebaseConfig(event)" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 15px;">
+        <div class="form-group" style="margin-bottom: 0;">
+          <label for="firebase-db-url" style="font-size: 12px; font-weight: 700;">URL do Firebase Realtime Database</label>
+          <div class="input-wrapper">
+            <i data-lucide="database"></i>
+            <input type="url" id="firebase-db-url" value="${firebaseURL}" placeholder="https://seu-projeto-default-rtdb.firebaseio.com" required style="padding-left: 44px;">
+          </div>
+        </div>
+        <button type="submit" class="btn" style="width: auto; padding: 10px 20px; font-size: 13px; display: inline-flex; align-items: center; gap: 8px;">
+          <i data-lucide="link"></i> Conectar Banco Central
+        </button>
+      </form>
+
+      ${firebaseURL ? `
+        <button class="btn btn-secondary" onclick="disconnectFirebase()" style="width: auto; padding: 8px 16px; font-size: 12px; color: var(--reclamacao); border-color: var(--reclamacao); background: transparent; display: block; margin-bottom: 15px;">
+          Desconectar Banco Central
+        </button>
+      ` : ''}
+
+      ${!firebaseEnabled && firebaseURL ? `
+        <div style="margin-top: 15px; padding: 10px 15px; background: rgba(229, 62, 62, 0.1); border-left: 4px solid var(--reclamacao); border-radius: 4px; font-size: 12px; color: var(--text-main); line-height: 1.4;">
+          Não foi possível conectar ao Firebase. Verifique se a URL está correta e se a base de dados possui regras de leitura/escrita públicas no Firebase Console (Modo de Teste).
+        </div>
+      ` : ''}
+
+      ${firebaseEnabled ? `
+        <div style="margin-top: 15px; padding-top: 15px; border-top: 1px dashed var(--border-color);">
+          <h4 style="font-size: 14px; font-weight: 700; margin-bottom: 8px;">Sincronizar Dados Locais</h4>
+          <p style="color: var(--text-secondary); font-size: 12px; margin-bottom: 12px; line-height: 1.4;">
+            Se você possui dados locais neste dispositivo e deseja enviá-los para o banco de dados central (sobrescrevendo o banco remoto), use o botão abaixo.
+          </p>
+          <button class="btn btn-secondary" onclick="syncLocalDataToCentral()" style="width: auto; padding: 8px 16px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px;">
+            <i data-lucide="arrow-up-circle"></i> Enviar Dados Locais para o Banco Central
+          </button>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function saveFirebaseConfig(e) {
+  try {
+    e.preventDefault();
+    const urlInput = document.getElementById('firebase-db-url');
+    if (!urlInput) return;
+    
+    let url = urlInput.value.trim();
+    if (url.endsWith('/')) {
+      url = url.slice(0, -1);
+    }
+    
+    localStorage.setItem('inovando_firebase_url', url);
+    firebaseURL = url;
+    
+    showToast("Salvando configurações e conectando...", "info");
+    initFirebase();
+  } catch (err) {
+    console.error("saveFirebaseConfig Error:", err);
+    showToast("Erro ao salvar configuração.", "error");
+  }
+}
+
+function disconnectFirebase() {
+  try {
+    if (!confirm("Tem certeza que deseja desconectar do banco central? O site voltará a operar no modo local offline.")) {
+      return;
+    }
+    
+    localStorage.removeItem('inovando_firebase_url');
+    firebaseURL = '';
+    firebaseEnabled = false;
+    dbRef = null;
+    
+    if (firebase.apps.length > 0) {
+      firebase.app().delete();
+    }
+    
+    showToast("Desconectado com sucesso. Usando modo offline local.", "success");
+    
+    // Restore local cache from localStorage
+    LOCAL_CACHE.users = JSON.parse(localStorage.getItem('inovando_users')) || SEED_USERS;
+    LOCAL_CACHE.manifestations = JSON.parse(localStorage.getItem('inovando_manifestations')) || SEED_MANIFESTATIONS;
+    LOCAL_CACHE.polls = JSON.parse(localStorage.getItem('inovando_polls')) || SEED_POLLS;
+    LOCAL_CACHE.logo = localStorage.getItem('inovando_logo') || null;
+    LOCAL_CACHE.theme = localStorage.getItem('inovando_theme') || 'light';
+    
+    renderApp();
+  } catch (err) {
+    console.error("disconnectFirebase Error:", err);
+  }
+}
+
+function syncLocalDataToCentral() {
+  try {
+    if (!firebaseEnabled || !dbRef) {
+      showToast("Não conectado ao banco central.", "error");
+      return;
+    }
+    
+    if (!confirm("ATENÇÃO: Isso enviará TODOS os dados salvos localmente neste computador (enquetes, sugestões e usuários) para o banco de dados central, substituindo qualquer dado existente lá. Deseja prosseguir?")) {
+      return;
+    }
+    
+    showToast("Enviando dados locais para a nuvem...", "info");
+    
+    dbRef.set({
+      users: LOCAL_CACHE.users,
+      manifestations: LOCAL_CACHE.manifestations,
+      polls: LOCAL_CACHE.polls,
+      logo: LOCAL_CACHE.logo || null,
+      theme: LOCAL_CACHE.theme
+    }).then(() => {
+      showToast("Sincronização completa! Todos os dados locais estão na nuvem.", "success");
+    }).catch(err => {
+      console.error("syncLocalDataToCentral Error:", err);
+      showToast("Erro ao enviar dados para a nuvem.", "error");
+    });
+  } catch (err) {
+    console.error("syncLocalDataToCentral Error:", err);
+  }
 }
 
 // --- FUNÇÕES DE BACKUP DE DADOS ---
