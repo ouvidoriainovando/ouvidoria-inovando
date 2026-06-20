@@ -8,7 +8,16 @@ const SEED_USERS = [
   { username: 'prof1', name: 'Ricardo Santos', role: 'aluno', password: 'inove123' },
   { username: 'aluno2', name: 'Beatriz Souza', role: 'aluno', password: 'inove123' },
   { username: 'paulo', name: 'Paulo de Melo', role: 'admin', password: 'Jes0us2team9a' },
-  { username: 'julia', name: 'Julia de Araújo', role: 'admin', password: 'Jes0us2team9a' }
+  { username: 'julia', name: 'Julia de Araújo', role: 'admin', password: 'Jes0us2team9a' },
+  { username: 'direcao', name: 'Direção Escolar', role: 'admin', password: 'Jes0us2team9a' }
+];
+
+const SEED_PRE_REGISTERED = [
+  { matricula: "2026001", nome: "Lucas Silva", turma: "6º Ano", codigoAtivacao: "X7K9P2", codigoStatus: "pendente" },
+  { matricula: "2026002", nome: "Beatriz Souza", turma: "7º Ano", codigoAtivacao: "Y8M4K1", codigoStatus: "pendente" },
+  { matricula: "2026003", nome: "Ricardo Santos", turma: "8º Ano", codigoAtivacao: "W2P9L7", codigoStatus: "pendente" },
+  { matricula: "2026004", nome: "Mariana Costa", turma: "9º Ano", codigoAtivacao: "Q5H8R3", codigoStatus: "pendente" },
+  { matricula: "2026005", nome: "Carlos Henrique", turma: "1º Ano Ensino Médio", codigoAtivacao: "A3J6T9", codigoStatus: "pendente" }
 ];
 
 const SEED_MANIFESTATIONS = [
@@ -151,6 +160,8 @@ const LOCAL_CACHE = {
   users: JSON.parse(localStorage.getItem('inovando_users')) || SEED_USERS,
   manifestations: JSON.parse(localStorage.getItem('inovando_manifestations')) || SEED_MANIFESTATIONS,
   polls: JSON.parse(localStorage.getItem('inovando_polls')) || SEED_POLLS,
+  pre_registered: JSON.parse(localStorage.getItem('inovando_pre_registered')) || SEED_PRE_REGISTERED,
+  audit_logs: JSON.parse(localStorage.getItem('inovando_audit_logs')) || [],
   logo: localStorage.getItem('inovando_logo') || null,
   theme: localStorage.getItem('inovando_theme') || 'light'
 };
@@ -172,6 +183,8 @@ const DB = {
     localStorage.removeItem('inovando_users');
     localStorage.removeItem('inovando_manifestations');
     localStorage.removeItem('inovando_polls');
+    localStorage.removeItem('inovando_pre_registered');
+    localStorage.removeItem('inovando_audit_logs');
     localStorage.removeItem('inovando_logo');
     localStorage.removeItem('inovando_theme');
     
@@ -180,6 +193,8 @@ const DB = {
         users: SEED_USERS,
         manifestations: SEED_MANIFESTATIONS,
         polls: SEED_POLLS,
+        pre_registered: SEED_PRE_REGISTERED,
+        audit_logs: [],
         logo: null,
         theme: 'light'
       }).then(() => {
@@ -228,6 +243,8 @@ function initFirebase() {
         if (data.users) LOCAL_CACHE.users = data.users;
         if (data.manifestations) LOCAL_CACHE.manifestations = data.manifestations;
         if (data.polls) LOCAL_CACHE.polls = data.polls;
+        if (data.pre_registered) LOCAL_CACHE.pre_registered = data.pre_registered;
+        if (data.audit_logs) LOCAL_CACHE.audit_logs = data.audit_logs;
         if (data.logo !== undefined) LOCAL_CACHE.logo = data.logo;
         if (data.theme) LOCAL_CACHE.theme = data.theme;
         
@@ -235,6 +252,8 @@ function initFirebase() {
         localStorage.setItem('inovando_users', JSON.stringify(LOCAL_CACHE.users));
         localStorage.setItem('inovando_manifestations', JSON.stringify(LOCAL_CACHE.manifestations));
         localStorage.setItem('inovando_polls', JSON.stringify(LOCAL_CACHE.polls));
+        localStorage.setItem('inovando_pre_registered', JSON.stringify(LOCAL_CACHE.pre_registered));
+        localStorage.setItem('inovando_audit_logs', JSON.stringify(LOCAL_CACHE.audit_logs));
         if (LOCAL_CACHE.logo) localStorage.setItem('inovando_logo', LOCAL_CACHE.logo);
         else localStorage.removeItem('inovando_logo');
         localStorage.setItem('inovando_theme', LOCAL_CACHE.theme);
@@ -247,6 +266,8 @@ function initFirebase() {
           users: LOCAL_CACHE.users,
           manifestations: LOCAL_CACHE.manifestations,
           polls: LOCAL_CACHE.polls,
+          pre_registered: LOCAL_CACHE.pre_registered,
+          audit_logs: LOCAL_CACHE.audit_logs,
           logo: LOCAL_CACHE.logo || null,
           theme: LOCAL_CACHE.theme
         });
@@ -274,25 +295,58 @@ function saveToFirebase(key, val) {
   }
 }
 
+function logAuditAction(action, targetItem) {
+  try {
+    if (!currentUser) return;
+    const logs = DB.get('audit_logs', []);
+    const newLog = {
+      id: "log_" + Date.now() + "_" + Math.random().toString(36).substring(2, 5),
+      adminUsername: currentUser.username,
+      adminName: currentUser.name,
+      action: action,
+      timestamp: new Date().toISOString(),
+      targetItem: targetItem
+    };
+    logs.unshift(newLog);
+    DB.set('audit_logs', logs);
+  } catch (err) {
+    console.error("logAuditAction Error:", err);
+  }
+}
+
 // Inicialização segura
 if (!localStorage.getItem('inovando_users')) DB.set('users', SEED_USERS);
 if (!localStorage.getItem('inovando_manifestations')) DB.set('manifestations', SEED_MANIFESTATIONS);
 if (!localStorage.getItem('inovando_polls')) DB.set('polls', SEED_POLLS);
+if (!localStorage.getItem('inovando_pre_registered')) DB.set('pre_registered', SEED_PRE_REGISTERED);
+if (!localStorage.getItem('inovando_audit_logs')) DB.set('audit_logs', []);
 
 // Inicializar Conexão Firebase
 initFirebase();
 
-// Migração segura para garantir que os administradores paulo e julia existam com senhas atualizadas
 function migrateUserData() {
   try {
     let users = DB.get('users', SEED_USERS);
     
     // Filtra versões anteriores ou duplicadas dos administradores (independente de maiúsculas/minúsculas)
-    users = users.filter(u => u.username.toLowerCase() !== 'paulo' && u.username.toLowerCase() !== 'julia');
+    users = users.filter(u => {
+      const uname = u.username.toLowerCase();
+      return uname !== 'paulo' && uname !== 'julia' && uname !== 'direcao';
+    });
     
     // Insere as contas limpas e autorizadas com nível de administrador
-    users.push({ username: 'paulo', name: 'Paulo de Melo', role: 'admin', password: 'Jes0us2team9a' });
-    users.push({ username: 'julia', name: 'Julia de Araújo', role: 'admin', password: 'Jes0us2team9a' });
+    users.push({ username: 'paulo', name: 'Paulo de Melo', role: 'admin', password: 'Jes0us2team9a', status: 'ativo' });
+    users.push({ username: 'julia', name: 'Julia de Araújo', role: 'admin', password: 'Jes0us2team9a', status: 'ativo' });
+    users.push({ username: 'direcao', name: 'Direção Escolar', role: 'admin', password: 'Jes0us2team9a', status: 'ativo' });
+    
+    // Criptografa dinamicamente as senhas na inicialização caso ainda não estejam em hash (hash tem 64 caracteres)
+    if (typeof sha256 !== 'undefined') {
+      users.forEach(u => {
+        if (u.password && u.password.length < 64) {
+          u.password = sha256(u.password);
+        }
+      });
+    }
     
     DB.set('users', users);
   } catch (err) {
@@ -383,6 +437,8 @@ let currentUser = JSON.parse(localStorage.getItem('inovando_session')) || null;
 let currentView = currentUser ? 'home' : 'login';
 let userToDelete = null;
 let theme = localStorage.getItem('inovando_theme') || 'light';
+let cadastroUserSearch = '';
+let cadastroPreSearch = '';
 
 // Sincroniza os dados da sessão atual com o banco de dados para refletir mudanças de cargos imediatamente
 if (currentUser) {
@@ -457,8 +513,11 @@ function formatDate(dateString) {
 
 // --- NAVEGAÇÃO E ROTEAMENTO ---
 function navigateTo(view) {
-  if (!currentUser && view !== 'login') {
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  if (!currentUser && view !== 'login' && view !== 'cadastro') {
     currentView = 'login';
+  } else if (currentUser && (view === 'admin' || view === 'cadastro_manager') && !isAdmin) {
+    currentView = 'home';
   } else {
     currentView = view;
   }
@@ -470,15 +529,51 @@ function handleLogin(e) {
   e.preventDefault();
   const usernameInput = document.getElementById('login-username').value.trim();
   const passwordInput = document.getElementById('login-password').value;
+  const codeInput = document.getElementById('login-code').value.trim();
 
   const users = DB.get('users', SEED_USERS);
-  const user = users.find(u => u.username.toLowerCase() === usernameInput.toLowerCase() && u.password === passwordInput);
+  const preRegistered = DB.get('pre_registered', SEED_PRE_REGISTERED);
+  const hashedPassword = typeof sha256 !== 'undefined' ? sha256(passwordInput) : passwordInput;
+  const user = users.find(u => u.username.toLowerCase() === usernameInput.toLowerCase() && u.password === hashedPassword);
 
   if (user) {
+    if (user.status === 'bloqueado') {
+      showToast('Sua conta está bloqueada pela administração.', 'error');
+      return;
+    }
+
+    // Validar o Código de Acesso
+    let correctCode = user.codigoAcesso;
+    if (user.role === 'admin') {
+      correctCode = 'j1u0p0l9';
+    } else {
+      if (!correctCode) {
+        const preReg = preRegistered.find(p => p.matricula.toLowerCase() === usernameInput.toLowerCase() || p.nome.toLowerCase() === user.name.toLowerCase());
+        if (preReg) {
+          correctCode = preReg.codigoAtivacao;
+        }
+      }
+      // Fallbacks
+      if (!correctCode) {
+        if (user.username === 'aluno') correctCode = 'X7K9P2';
+        else if (user.username === 'aluno2') correctCode = 'Y8M4K1';
+        else if (user.username === 'prof1') correctCode = 'W2P9L7';
+      }
+    }
+
+    if (correctCode && correctCode.toUpperCase() !== codeInput.toUpperCase()) {
+      showToast('Código de acesso incorreto.', 'error');
+      return;
+    }
+
+    user.lastAccess = new Date().toISOString();
+    DB.set('users', users);
+
     currentUser = {
       username: user.username,
       name: user.name,
-      role: user.role
+      role: user.role,
+      profilePic: user.profilePic || null
     };
     localStorage.setItem('inovando_session', JSON.stringify(currentUser));
     currentView = 'home';
@@ -923,7 +1018,10 @@ function voteInPoll(pollId, optionId) {
     const option = (poll.options || []).find(o => o.id === optionId);
     if (option) {
       option.votes += 1;
-      poll.votedUsers[currentUser.username] = optionId;
+      poll.votedUsers[currentUser.username] = {
+        optionId: optionId,
+        timestamp: new Date().toISOString()
+      };
       DB.set('polls', polls);
       showToast('Seu voto foi registrado!');
       if (currentView === 'home') renderHome();
@@ -951,8 +1049,9 @@ function changeVote(pollId) {
       poll.votedUsers = {};
     }
 
-    const optionId = poll.votedUsers[currentUser.username];
-    if (optionId) {
+    const userVote = poll.votedUsers[currentUser.username];
+    if (userVote) {
+      const optionId = typeof userVote === 'object' ? userVote.optionId : userVote;
       const option = (poll.options || []).find(o => o.id === optionId);
       if (option && option.votes > 0) {
         option.votes -= 1;
@@ -1096,6 +1195,7 @@ function savePoll(e) {
         polls[index].options = options;
         polls[index].daysLeft = daysLeft;
         DB.set('polls', polls);
+        logAuditAction('Editou enquete', question);
         showToast('Enquete atualizada!');
       }
     } else {
@@ -1103,12 +1203,13 @@ function savePoll(e) {
         id: 'poll_' + Date.now(),
         question,
         options,
-        votedUsers: [],
+        votedUsers: {},
         active: true,
         daysLeft: daysLeft
       };
       polls.unshift(newPoll);
       DB.set('polls', polls);
+      logAuditAction('Criou enquete', question);
       showToast('Enquete publicada!');
     }
 
@@ -1126,6 +1227,7 @@ function togglePollStatus(pollId) {
   if (poll) {
     poll.active = !poll.active;
     DB.set('polls', polls);
+    logAuditAction(poll.active ? 'Ativou enquete' : 'Pausou enquete', poll.question);
     showToast(`Enquete ${poll.active ? 'reativada' : 'encerrada'}.`);
     renderEnquetes();
   }
@@ -1231,17 +1333,25 @@ function confirmDeleteUser() {
   }
 
   const users = DB.get('users', SEED_USERS);
+  const user = users.find(u => u.username === userToDelete);
+  const name = user ? user.name : userToDelete;
+
   const filtered = users.filter(u => u.username !== userToDelete);
 
   if (users.length === filtered.length) {
     showToast('Usuário não encontrado.', 'error');
   } else {
     DB.set('users', filtered);
+    logAuditAction('Excluiu usuário', `Usuário: ${name} (${userToDelete})`);
     showToast('Usuário removido com sucesso!');
   }
 
   closeDeleteUserModal();
-  renderAdmin();
+  if (currentView === 'cadastro_manager') {
+    renderCadastroManager();
+  } else {
+    renderAdmin();
+  }
 }
 
 function getUserAvatarHtml(user) {
@@ -1312,6 +1422,11 @@ function removeProfilePic(event) {
 
 function renderApp() {
   const rootEl = document.getElementById('root');
+
+  if (currentView === 'cadastro') {
+    renderCadastro();
+    return;
+  }
   
   // LOGIN - ATUALIZADO COM O LOGOTIPO VETORIAL DA ORELHA E SLOGAN SUBSTITUINDO O "I"
   if (currentView === 'login') {
@@ -1331,10 +1446,10 @@ function renderApp() {
           
           <form class="login-form" onsubmit="handleLogin(event)">
             <div class="form-group">
-              <label for="login-username">Matrícula ou Login Escolar</label>
+              <label for="login-username">Login</label>
               <div class="input-wrapper">
                 <i data-lucide="user"></i>
-                <input type="text" id="login-username" placeholder="Digite seu login escolar" required autofocus>
+                <input type="text" id="login-username" placeholder="Digite seu login" required autofocus>
               </div>
             </div>
             
@@ -1345,11 +1460,25 @@ function renderApp() {
                 <input type="password" id="login-password" placeholder="Digite sua senha" required>
               </div>
             </div>
+
+            <div class="form-group">
+              <label for="login-code">Código de Acesso</label>
+              <div class="input-wrapper">
+                <i data-lucide="key"></i>
+                <input type="text" id="login-code" placeholder="Digite seu Código de Acesso" required>
+              </div>
+            </div>
             
             <button type="submit" class="btn">
               <span>Entrar</span>
               <i data-lucide="arrow-right"></i>
             </button>
+
+            <div style="text-align: center; margin-top: 15px;">
+              <a onclick="navigateTo('cadastro')" style="color: var(--text-secondary); font-size: 13px; text-decoration: underline; cursor: pointer;">
+                Não tem uma conta? Cadastre-se aqui
+              </a>
+            </div>
           </form>
         </div>
       </div>
@@ -1439,6 +1568,12 @@ function renderApp() {
                 <span>Painel Admin</span>
               </a>
             </li>
+            <li>
+              <a class="menu-item-link ${currentView === 'cadastro_manager' ? 'active' : ''}" onclick="navigateTo('cadastro_manager')">
+                <i data-lucide="users-round"></i>
+                <span>Gerenciar Cadastros</span>
+              </a>
+            </li>
           ` : ''}
           <li>
             <a class="menu-item-link ${currentView === 'settings' ? 'active' : ''}" onclick="navigateTo('settings')">
@@ -1489,6 +1624,10 @@ function renderApp() {
       break;
     case 'admin':
       if (isAdmin) renderAdmin();
+      else navigateTo('home');
+      break;
+    case 'cadastro_manager':
+      if (isAdmin) renderCadastroManager();
       else navigateTo('home');
       break;
     case 'settings':
@@ -1614,7 +1753,8 @@ function renderHome() {
                   const percentage = totalVotes > 0 ? Math.round((opt.votes / totalVotes) * 100) : 0;
                   
                   if (hasVoted || !poll.active) {
-                    const userVotedOptionId = poll.votedUsers ? poll.votedUsers[currentUser.username] : null;
+                    const userVote = poll.votedUsers ? poll.votedUsers[currentUser.username] : null;
+                    const userVotedOptionId = userVote && typeof userVote === 'object' ? userVote.optionId : userVote;
                     const userVotedForThis = hasVoted && userVotedOptionId === opt.id;
                     return `
                       <div class="poll-option-row">
@@ -2113,7 +2253,8 @@ function renderEnquetes() {
                 const percentage = totalVotes > 0 ? Math.round((opt.votes / totalVotes) * 100) : 0;
 
                 if (hasVoted || !poll.active) {
-                  const userVotedOptionId = poll.votedUsers ? poll.votedUsers[currentUser.username] : null;
+                  const userVote = poll.votedUsers ? poll.votedUsers[currentUser.username] : null;
+                  const userVotedOptionId = userVote && typeof userVote === 'object' ? userVote.optionId : userVote;
                   const userVotedForThis = hasVoted && userVotedOptionId === opt.id;
                   return `
                     <div class="poll-option-row">
@@ -2442,8 +2583,11 @@ function drawBarChart(polls) {
 function deletePoll(pollId) {
   if (confirm('Tem certeza que deseja excluir esta enquete permanentemente?')) {
     const polls = DB.get('polls', SEED_POLLS);
+    const poll = polls.find(p => p.id === pollId);
+    const question = poll ? poll.question : pollId;
     const filtered = polls.filter(p => p.id !== pollId);
     DB.set('polls', filtered);
+    logAuditAction('Excluiu enquete', question);
     showToast('Enquete excluída.');
     renderEnquetes();
   }
@@ -2457,6 +2601,7 @@ function resetPollVotes(pollId) {
       (poll.options || []).forEach(opt => opt.votes = 0);
       poll.votedUsers = {};
       DB.set('polls', polls);
+      logAuditAction('Reiniciou votos de enquete', poll.question);
       showToast('Votos da enquete reiniciados!');
       renderEnquetes();
     }
@@ -2835,6 +2980,821 @@ function shareApp() {
     });
   } else {
     copyAppUrl();
+  }
+}
+
+// --- NOVAS FUNÇÕES DO SISTEMA DE CADASTRO E CONTROLE DE ACESSO ---
+
+function renderCadastro() {
+  const rootEl = document.getElementById('root');
+  rootEl.innerHTML = `
+    <div class="login-container">
+      <div class="login-card">
+        <div class="logo-header">
+          <div class="login-logo-badge">
+            ${getLogoHtml('login-logo-img')}
+          </div>
+          <div class="logo-title" style="margin-top: 5px;">Ouvidoria <span>Inovando</span></div>
+          <div class="logo-subtitle" style="margin-bottom: 5px;">Criar Nova Conta</div>
+          <p class="login-slogan-text">"Sua voz transforma nossa escola."</p>
+        </div>
+        
+        <form class="login-form" onsubmit="handleCadastro(event)">
+          <div class="form-group">
+            <label for="cadastro-name">Nome Completo</label>
+            <div class="input-wrapper">
+              <i data-lucide="user"></i>
+              <input type="text" id="cadastro-name" placeholder="Digite seu nome completo" required autofocus>
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label for="cadastro-class">Turma</label>
+            <div class="input-wrapper">
+              <i data-lucide="graduation-cap"></i>
+              <select id="cadastro-class" required>
+                <option value="" disabled selected>Selecione sua turma...</option>
+                <option value="6º Ano">6º Ano</option>
+                <option value="7º Ano">7º Ano</option>
+                <option value="8º Ano">8º Ano</option>
+                <option value="9º Ano">9º Ano</option>
+                <option value="1º Ano Ensino Médio">1º Ano Ensino Médio</option>
+                <option value="2º Ano Ensino Médio">2º Ano Ensino Médio</option>
+                <option value="3º Ano Ensino Médio">3º Ano Ensino Médio</option>
+              </select>
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label for="cadastro-password">Senha</label>
+            <div class="input-wrapper">
+              <i data-lucide="lock"></i>
+              <input type="password" id="cadastro-password" placeholder="Digite a senha desejada" required>
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label for="cadastro-code">Código de Acesso</label>
+            <div class="input-wrapper">
+              <i data-lucide="key"></i>
+              <input type="text" id="cadastro-code" placeholder="Digite o Código de Acesso" required>
+            </div>
+          </div>
+          
+          <button type="submit" class="btn">
+            <span>Cadastrar</span>
+            <i data-lucide="user-plus"></i>
+          </button>
+          
+          <div style="text-align: center; margin-top: 15px;">
+            <a onclick="navigateTo('login')" style="color: var(--text-secondary); font-size: 13px; text-decoration: underline; cursor: pointer;">
+              Já tem uma conta? Faça Login
+            </a>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  lucide.createIcons();
+}
+
+function handleCadastro(e) {
+  e.preventDefault();
+  const nomeInput = document.getElementById('cadastro-name').value.trim();
+  const turmaInput = document.getElementById('cadastro-class').value;
+  const passwordInput = document.getElementById('cadastro-password').value;
+  const codeInput = document.getElementById('cadastro-code').value.trim();
+
+  if (!nomeInput || !turmaInput || !passwordInput || !codeInput) {
+    showToast('Por favor, preencha todos os campos.', 'error');
+    return;
+  }
+
+  const users = DB.get('users', SEED_USERS);
+  const preRegistered = DB.get('pre_registered', SEED_PRE_REGISTERED);
+
+  // 1. Se for o código fixo compartilhado de administradores:
+  if (codeInput === 'j1u0p0l9') {
+    const firstName = nomeInput.split(' ')[0] || 'admin';
+    let baseUsername = firstName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    let generatedUsername = baseUsername;
+    let suffix = 1;
+    while (users.some(u => u.username.toLowerCase() === generatedUsername.toLowerCase())) {
+      generatedUsername = baseUsername + suffix;
+      suffix++;
+    }
+
+    const hashedPassword = typeof sha256 !== 'undefined' ? sha256(passwordInput) : passwordInput;
+    const newAdmin = {
+      username: generatedUsername,
+      name: nomeInput,
+      role: 'admin',
+      password: hashedPassword,
+      turma: turmaInput,
+      status: 'ativo',
+      codigoAcesso: 'j1u0p0l9',
+      created_at: new Date().toISOString()
+    };
+
+    users.push(newAdmin);
+    DB.set('users', users);
+
+    showToast(`Administrador cadastrado com sucesso! Seu login é: ${generatedUsername}`, 'success');
+    navigateTo('login');
+    return;
+  }
+
+  // 2. Se for cadastro de aluno, buscar nas matrículas pré-cadastradas:
+  const matchedPreReg = preRegistered.find(p => p.codigoAtivacao.trim().toUpperCase() === codeInput.toUpperCase());
+  if (!matchedPreReg) {
+    showToast('Código de acesso inválido.', 'error');
+    return;
+  }
+
+  if (matchedPreReg.codigoStatus !== 'pendente') {
+    showToast('Este código de acesso já foi utilizado ou está inativo.', 'error');
+    return;
+  }
+
+  const matricula = matchedPreReg.matricula;
+  if (users.some(u => u.username.toLowerCase() === matricula.toLowerCase())) {
+    showToast('Já existe um usuário cadastrado para esta matrícula.', 'error');
+    return;
+  }
+
+  const hashedPassword = typeof sha256 !== 'undefined' ? sha256(passwordInput) : passwordInput;
+  const newStudent = {
+    username: matricula,
+    name: nomeInput,
+    role: 'aluno',
+    password: hashedPassword,
+    turma: turmaInput,
+    status: 'ativo',
+    codigoAcesso: codeInput,
+    created_at: new Date().toISOString()
+  };
+
+  matchedPreReg.codigoStatus = 'utilizado';
+
+  users.push(newStudent);
+  DB.set('users', users);
+  DB.set('pre_registered', preRegistered);
+
+  showToast(`Cadastro realizado com sucesso! Use sua matrícula (${matricula}) para fazer login.`, 'success');
+  navigateTo('login');
+}
+
+function renderCadastroManager() {
+  const container = document.getElementById('main-content-area');
+  if (!container) return;
+
+  const users = DB.get('users', SEED_USERS);
+  const preRegistered = DB.get('pre_registered', SEED_PRE_REGISTERED);
+  const logs = DB.get('audit_logs', []);
+
+  // Calcular estatísticas
+  const totalUsers = users.length;
+  const activeUsers = users.filter(u => u.status !== 'bloqueado').length;
+  const blockedUsers = users.filter(u => u.status === 'bloqueado').length;
+  const totalCodes = preRegistered.length;
+  const usedCodes = preRegistered.filter(c => c.codigoStatus === 'utilizado').length;
+  const pendingCodes = preRegistered.filter(c => c.codigoStatus === 'pendente').length;
+
+  // Filtrar usuários
+  const filteredUsers = users.filter(u => {
+    const term = cadastroUserSearch.toLowerCase();
+    return (u.name || '').toLowerCase().includes(term) ||
+           (u.username || '').toLowerCase().includes(term) ||
+           (u.turma || '').toLowerCase().includes(term);
+  });
+
+  // Filtrar pré-cadastrados
+  const filteredPreRegistered = preRegistered.filter(p => {
+    const term = cadastroPreSearch.toLowerCase();
+    return (p.nome || '').toLowerCase().includes(term) ||
+           (p.matricula || '').toLowerCase().includes(term) ||
+           (p.turma || '').toLowerCase().includes(term);
+  });
+
+  container.innerHTML = `
+    <div class="top-bar" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-color); padding-bottom:20px; margin-bottom:25px; flex-wrap: wrap; gap: 15px;">
+      <div class="page-title">
+        <h1 style="font-size:26px; font-weight:800; letter-spacing:-0.5px;">Gerenciamento de Cadastros</h1>
+        <p style="font-size:14px; color:var(--text-secondary); margin-top:4px;">Controle de acessos, pré-cadastros, códigos de ativação e log de auditoria</p>
+      </div>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+        <button class="btn btn-secondary" onclick="openPreRegisterModal()" style="width: auto; padding: 10px 18px; display: inline-flex; align-items: center; gap: 8px;">
+          <i data-lucide="user-plus"></i> Pré-Cadastrar Aluno
+        </button>
+        <button class="btn" onclick="openBulkPreRegisterModal()" style="width: auto; padding: 10px 18px; display: inline-flex; align-items: center; gap: 8px;">
+          <i data-lucide="file-spreadsheet"></i> Importação em Lote
+        </button>
+      </div>
+    </div>
+
+    <!-- KPIs do Painel de Cadastro -->
+    <section class="admin-stats-grid" style="margin-bottom: 25px;">
+      <div class="kpi-card">
+        <div class="kpi-icon purple">
+          <i data-lucide="users"></i>
+        </div>
+        <div class="kpi-details">
+          <span class="kpi-value">${totalUsers}</span>
+          <span class="kpi-label">Usuários Ativos</span>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icon green">
+          <i data-lucide="user-check"></i>
+        </div>
+        <div class="kpi-details">
+          <span class="kpi-value">${activeUsers}</span>
+          <span class="kpi-label">Contas Ativas</span>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icon orange">
+          <i data-lucide="user-x"></i>
+        </div>
+        <div class="kpi-details">
+          <span class="kpi-value">${blockedUsers}</span>
+          <span class="kpi-label">Contas Bloqueadas</span>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icon blue">
+          <i data-lucide="key"></i>
+        </div>
+        <div class="kpi-details">
+          <span class="kpi-value">${pendingCodes}</span>
+          <span class="kpi-label">Códigos Pendentes</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- SEÇÕES INTERNAS -->
+    <div style="display: flex; flex-direction: column; gap: 30px;">
+      
+      <!-- Seção: Usuários Cadastrados -->
+      <section class="users-table-card">
+        <div class="table-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; padding: 20px;">
+          <div>
+            <h3>Usuários Cadastrados no Sistema</h3>
+            <span style="font-size: 13px; color: var(--text-secondary);">Alunos e administradores que ativaram suas contas</span>
+          </div>
+          <div class="search-input-wrapper" style="margin: 0; max-width: 300px;">
+            <i data-lucide="search"></i>
+            <input type="text" id="cadastro-user-search-input" placeholder="Buscar usuário por nome, login..." value="${cadastroUserSearch}" oninput="cadastroUserSearch = this.value; renderCadastroManager()">
+          </div>
+        </div>
+        
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Login / Matrícula</th>
+                <th>Nome Completo</th>
+                <th>Turma</th>
+                <th>Criado em</th>
+                <th>Último Acesso</th>
+                <th>Qtd Votos</th>
+                <th>Status</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filteredUsers.length === 0 ? `
+                <tr>
+                  <td colspan="8" style="text-align: center; color: var(--text-secondary); padding: 30px;">Nenhum usuário cadastrado correspondente encontrado.</td>
+                </tr>
+              ` : filteredUsers.map(u => {
+                const isSelf = u.username === currentUser.username;
+                const dateCadastro = u.created_at ? formatDate(u.created_at) : 'Dados Semente';
+                const dateLastAccess = u.lastAccess ? formatDate(u.lastAccess) : 'Nunca';
+                const countVotes = getUserVotesCount(u.username);
+                const isBlocked = u.status === 'bloqueado';
+
+                return `
+                  <tr>
+                    <td style="font-weight: 700;">${u.username}</td>
+                    <td>${u.name}</td>
+                    <td>
+                      <span class="badge ${u.role === 'admin' ? 'reclamacao' : 'sugestao'}" style="font-size: 9px;">
+                        ${u.turma || (u.role === 'admin' ? 'Administração' : 'Não Definido')}
+                      </span>
+                    </td>
+                    <td>${dateCadastro}</td>
+                    <td>${dateLastAccess}</td>
+                    <td style="text-align: center; font-weight: 700;">${countVotes}</td>
+                    <td>
+                      <span class="badge ${isBlocked ? 'status-pending' : 'status-resolved'}" style="font-size: 9px;">
+                        ${isBlocked ? 'Bloqueada' : 'Ativa'}
+                      </span>
+                    </td>
+                    <td>
+                      <div style="display: flex; gap: 6px;">
+                        ${isSelf ? `
+                          <span style="font-size: 11px; color: var(--text-secondary); font-style: italic;">Sua Conta</span>
+                        ` : `
+                          <button class="btn btn-secondary" onclick="toggleUserBlockStatus('${u.username}')" style="padding: 6px 10px; font-size: 11px; width: auto; border-color: ${isBlocked ? 'var(--elogio)' : 'var(--reclamacao)'}; color: ${isBlocked ? 'var(--elogio)' : 'var(--reclamacao)'}; display: inline-flex; align-items: center; gap: 4px; background: transparent; height: 30px;">
+                            <i data-lucide="${isBlocked ? 'unlock' : 'lock'}"></i> ${isBlocked ? 'Desbloquear' : 'Bloquear'}
+                          </button>
+                          <button class="btn btn-secondary" onclick="openResetPasswordModal('${u.username}', '${u.name.replace(/'/g, "\\'")}')" style="padding: 6px 10px; font-size: 11px; width: auto; display: inline-flex; align-items: center; gap: 4px; height: 30px;">
+                            <i data-lucide="key-round"></i> Senha
+                          </button>
+                          <button class="btn btn-secondary btn-danger" onclick="openDeleteUserModal('${u.username}', '${u.name.replace(/'/g, "\\'")}')" style="padding: 6px 10px; font-size: 11px; width: auto; display: inline-flex; align-items: center; gap: 4px; height: 30px;">
+                            <i data-lucide="trash-2"></i> Excluir
+                          </button>
+                        `}
+                      </div>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Seção: Pré-Cadastros / Códigos de Ativação -->
+      <section class="users-table-card">
+        <div class="table-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; padding: 20px;">
+          <div>
+            <h3>Códigos de Acesso e Pré-Cadastros</h3>
+            <span style="font-size: 13px; color: var(--text-secondary);">Autorizações geradas pela administração para criação de contas</span>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; flex-grow: 1; justify-content: flex-end;">
+            <div class="search-input-wrapper" style="margin: 0; max-width: 250px;">
+              <i data-lucide="search"></i>
+              <input type="text" id="cadastro-pre-search-input" placeholder="Buscar aluno pré-cadastrado..." value="${cadastroPreSearch}" oninput="cadastroPreSearch = this.value; renderCadastroManager()">
+            </div>
+            <button class="btn btn-secondary btn-danger" onclick="deactivateAllUnusedCodes()" style="width: auto; padding: 10px 15px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; height: 44px; margin-top:0;">
+              <i data-lucide="shield-x"></i> Desativar Códigos
+            </button>
+          </div>
+        </div>
+
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Matrícula</th>
+                <th>Nome Completo</th>
+                <th>Turma</th>
+                <th>Código de Acesso</th>
+                <th>Status do Código</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filteredPreRegistered.length === 0 ? `
+                <tr>
+                  <td colspan="6" style="text-align: center; color: var(--text-secondary); padding: 30px;">Nenhum pré-cadastro correspondente encontrado.</td>
+                </tr>
+              ` : filteredPreRegistered.map(p => {
+                const isPending = p.codigoStatus === 'pendente';
+                return `
+                  <tr>
+                    <td style="font-weight: 700;">${p.matricula}</td>
+                    <td>${p.nome}</td>
+                    <td>
+                      <span class="badge sugestao" style="font-size: 9px;">${p.turma}</span>
+                    </td>
+                    <td><code style="font-size: 14px; font-weight: 700; color: var(--primary); background: rgba(229,62,62,0.05); padding: 4px 8px; border-radius: 6px; border: 1px dashed rgba(229,62,62,0.2);">${p.codigoAtivacao}</code></td>
+                    <td>
+                      <span class="badge ${isPending ? 'status-pending' : 'status-resolved'}" style="font-size: 9px;">
+                        ${isPending ? 'Pendente' : 'Utilizado'}
+                      </span>
+                    </td>
+                    <td>
+                      ${isPending ? `
+                        <button class="btn btn-secondary" onclick="regenerateActivationCode('${p.matricula}')" style="padding: 6px 10px; font-size: 11px; width: auto; display: inline-flex; align-items: center; gap: 4px; height: 30px;">
+                          <i data-lucide="refresh-cw"></i> Regenerar Código
+                        </button>
+                      ` : `
+                        <span style="font-size: 11px; color: var(--elogio); font-weight: 700; display: inline-flex; align-items: center; gap: 4px;">
+                          <i data-lucide="check-circle" style="width: 14px; height: 14px;"></i> Conta Criada
+                        </span>
+                      `}
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Seção: Histórico de Auditoria -->
+      <section class="users-table-card">
+        <div class="table-header" style="padding: 20px;">
+          <h3>Histórico de Auditoria Administrativa</h3>
+          <span style="font-size: 13px; color: var(--text-secondary);">Registro detalhado das ações executadas por administradores do site</span>
+        </div>
+        <div class="table-wrapper" style="max-height: 400px; overflow-y: auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>Administrador</th>
+                <th>Ação Executada</th>
+                <th>Item Afetado / Detalhes</th>
+                <th>Data e Hora</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${logs.length === 0 ? `
+                <tr>
+                  <td colspan="4" style="text-align: center; color: var(--text-secondary); padding: 30px;">Nenhuma ação de auditoria registrada ainda.</td>
+                </tr>
+              ` : logs.map(l => {
+                return `
+                  <tr>
+                    <td style="font-weight: 700;">${l.adminName} (${l.adminUsername})</td>
+                    <td style="color: var(--primary); font-weight: 700;">${l.action}</td>
+                    <td>${l.targetItem}</td>
+                    <td>${formatDate(l.timestamp)}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    </div>
+  `;
+
+  // Restaurar foco e seleção nos inputs de busca
+  const activeId = document.activeElement ? document.activeElement.id : null;
+  if (activeId) {
+    const activeEl = document.getElementById(activeId);
+    if (activeEl) {
+      activeEl.focus();
+      const valLength = activeEl.value ? activeEl.value.length : 0;
+      activeEl.setSelectionRange(valLength, valLength);
+    }
+  }
+
+  lucide.createIcons();
+}
+
+function getUserVotesCount(username) {
+  try {
+    const polls = DB.get('polls', SEED_POLLS);
+    let count = 0;
+    polls.forEach(poll => {
+      if (poll.votedUsers && poll.votedUsers[username] !== undefined) {
+        count++;
+      }
+    });
+    return count;
+  } catch (err) {
+    console.error("getUserVotesCount Error:", err);
+    return 0;
+  }
+}
+
+function generateActivationCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
+
+function openPreRegisterModal() {
+  const modalDiv = document.createElement('div');
+  modalDiv.id = 'pre-register-modal-container';
+  modalDiv.className = 'modal-overlay active';
+  modalDiv.innerHTML = `
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title"><i data-lucide="user-plus"></i> Pré-Cadastrar Aluno</h3>
+        <button class="close-modal-btn" onclick="closePreRegisterModal()">&times;</button>
+      </div>
+      <form onsubmit="handlePreRegisterSubmit(event)">
+        <div class="form-group">
+          <label for="pre-matricula">Matrícula</label>
+          <div class="input-wrapper">
+            <i data-lucide="hash"></i>
+            <input type="text" id="pre-matricula" placeholder="Ex: 2026006" required autofocus>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="pre-name">Nome Completo</label>
+          <div class="input-wrapper">
+            <i data-lucide="user"></i>
+            <input type="text" id="pre-name" placeholder="Ex: João da Silva Santos" required>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="pre-class">Turma</label>
+          <div class="input-wrapper">
+            <i data-lucide="graduation-cap" style="left: 16px;"></i>
+            <select id="pre-class" required>
+              ${TURMAS_OPTIONS_HTML}
+            </select>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closePreRegisterModal()">Cancelar</button>
+          <button type="submit" class="btn">Pré-Cadastrar</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(modalDiv);
+  lucide.createIcons();
+}
+
+function closePreRegisterModal() {
+  const modal = document.getElementById('pre-register-modal-container');
+  if (modal) modal.remove();
+}
+
+function handlePreRegisterSubmit(e) {
+  e.preventDefault();
+  const matricula = document.getElementById('pre-matricula').value.trim();
+  const nome = document.getElementById('pre-name').value.trim();
+  const turma = document.getElementById('pre-class').value;
+
+  if (!matricula || !nome || !turma) {
+    showToast('Todos os campos são obrigatórios.', 'error');
+    return;
+  }
+
+  const preRegistered = DB.get('pre_registered', SEED_PRE_REGISTERED);
+
+  if (preRegistered.some(p => p.matricula.toLowerCase() === matricula.toLowerCase())) {
+    showToast('Esta matrícula já está pré-cadastrada.', 'error');
+    return;
+  }
+
+  const code = generateActivationCode();
+  const newPre = {
+    matricula,
+    nome,
+    turma,
+    codigoAtivacao: code,
+    codigoStatus: 'pendente'
+  };
+
+  preRegistered.push(newPre);
+  DB.set('pre_registered', preRegistered);
+
+  logAuditAction('Pré-cadastrou aluno', `Matrícula: ${matricula}, Nome: ${nome}, Código: ${code}`);
+
+  showToast(`Aluno pré-cadastrado! Código gerado: ${code}`, 'success');
+  closePreRegisterModal();
+  renderCadastroManager();
+}
+
+function openBulkPreRegisterModal() {
+  const modalDiv = document.createElement('div');
+  modalDiv.id = 'bulk-register-modal-container';
+  modalDiv.className = 'modal-overlay active';
+  modalDiv.innerHTML = `
+    <div class="modal-card" style="max-width: 500px;">
+      <div class="modal-header">
+        <h3 class="modal-title"><i data-lucide="file-spreadsheet"></i> Pré-Cadastro em Lote</h3>
+        <button class="close-modal-btn" onclick="closeBulkPreRegisterModal()">&times;</button>
+      </div>
+      <form onsubmit="handleBulkPreRegisterSubmit(event)">
+        <div class="form-group">
+          <label for="bulk-class">Turma dos Alunos</label>
+          <div class="input-wrapper">
+            <i data-lucide="graduation-cap" style="left: 16px;"></i>
+            <select id="bulk-class" required>
+              ${TURMAS_OPTIONS_HTML}
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="bulk-data">Lista de Alunos (Formato: MATRÍCULA;NOME COMPLETO)</label>
+          <p style="font-size: 11px; color: var(--text-secondary); margin-bottom: 8px;">Insira um aluno por linha. Exemplo:<br><code style="font-family: monospace;">2026101;Maria Souza<br>2026102;Pedro Alves</code></p>
+          <textarea id="bulk-data" placeholder="Insira a lista aqui..." required style="min-height: 150px; font-family: monospace; font-size: 12px;"></textarea>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeBulkPreRegisterModal()">Cancelar</button>
+          <button type="submit" class="btn">Processar e Gerar Códigos</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(modalDiv);
+  lucide.createIcons();
+}
+
+function closeBulkPreRegisterModal() {
+  const modal = document.getElementById('bulk-register-modal-container');
+  if (modal) modal.remove();
+}
+
+function handleBulkPreRegisterSubmit(e) {
+  e.preventDefault();
+  const turma = document.getElementById('bulk-class').value;
+  const rawText = document.getElementById('bulk-data').value.trim();
+
+  if (!turma || !rawText) {
+    showToast('Preencha a turma e insira a lista de alunos.', 'error');
+    return;
+  }
+
+  const lines = rawText.split('\n');
+  const preRegistered = DB.get('pre_registered', SEED_PRE_REGISTERED);
+  let addedCount = 0;
+  let skippedCount = 0;
+  const generatedEntries = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    const parts = line.split(';');
+    if (parts.length < 2) {
+      skippedCount++;
+      continue;
+    }
+
+    const matricula = parts[0].trim();
+    const nome = parts[1].trim();
+
+    if (!matricula || !nome) {
+      skippedCount++;
+      continue;
+    }
+
+    if (preRegistered.some(p => p.matricula.toLowerCase() === matricula.toLowerCase())) {
+      skippedCount++;
+      continue;
+    }
+
+    const code = generateActivationCode();
+    const newEntry = {
+      matricula,
+      nome,
+      turma,
+      codigoAtivacao: code,
+      codigoStatus: 'pendente'
+    };
+
+    preRegistered.push(newEntry);
+    generatedEntries.push(`Matrícula: ${matricula} (${code})`);
+    addedCount++;
+  }
+
+  if (addedCount > 0) {
+    DB.set('pre_registered', preRegistered);
+    logAuditAction('Pré-cadastrou em lote', `${addedCount} alunos na turma ${turma}: ${generatedEntries.slice(0, 5).join(', ')}${generatedEntries.length > 5 ? '...' : ''}`);
+    showToast(`${addedCount} alunos cadastrados com sucesso! ${skippedCount} linhas ignoradas/duplicadas.`, 'success');
+  } else {
+    showToast('Nenhum aluno foi cadastrado. Verifique a formatação ou se já existem.', 'error');
+  }
+
+  closeBulkPreRegisterModal();
+  renderCadastroManager();
+}
+
+function toggleUserBlockStatus(username) {
+  try {
+    const users = DB.get('users', SEED_USERS);
+    const user = users.find(u => u.username.toLowerCase() === username.toLowerCase());
+    if (user) {
+      const isBlocked = user.status === 'bloqueado';
+      user.status = isBlocked ? 'ativo' : 'bloqueado';
+      DB.set('users', users);
+      
+      const action = isBlocked ? 'Desbloqueou conta' : 'Bloqueou conta';
+      logAuditAction(action, `Usuário: ${user.name} (${username})`);
+      showToast(`Conta de ${user.name} foi ${isBlocked ? 'desbloqueada' : 'bloqueada'} com sucesso.`);
+      renderCadastroManager();
+    }
+  } catch (err) {
+    console.error("toggleUserBlockStatus Error:", err);
+  }
+}
+
+function openResetPasswordModal(username, name) {
+  const modalDiv = document.createElement('div');
+  modalDiv.id = 'reset-password-modal-container';
+  modalDiv.className = 'modal-overlay active';
+  modalDiv.innerHTML = `
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title"><i data-lucide="key-round"></i> Redefinir Senha</h3>
+        <button class="close-modal-btn" onclick="closeResetPasswordModal()">&times;</button>
+      </div>
+      <form onsubmit="handleResetPasswordSubmit(event, '${username}')">
+        <div style="margin-bottom: 20px;">
+          <p style="font-size: 14px; color: var(--text-secondary);">Redefinindo a senha de acesso para:</p>
+          <p style="font-weight: 700; font-size: 16px; margin-top: 5px;">${name} (Matrícula/Login: ${username})</p>
+        </div>
+
+        <div class="form-group">
+          <label for="reset-new-password">Nova Senha</label>
+          <div class="input-wrapper">
+            <i data-lucide="lock"></i>
+            <input type="password" id="reset-new-password" placeholder="Digite a nova senha provisória" required autofocus>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeResetPasswordModal()">Cancelar</button>
+          <button type="submit" class="btn">Redefinir Senha</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(modalDiv);
+  lucide.createIcons();
+}
+
+function closeResetPasswordModal() {
+  const modal = document.getElementById('reset-password-modal-container');
+  if (modal) modal.remove();
+}
+
+function handleResetPasswordSubmit(e, username) {
+  e.preventDefault();
+  const newPassword = document.getElementById('reset-new-password').value;
+
+  if (!newPassword) {
+    showToast('A senha não pode ser vazia.', 'error');
+    return;
+  }
+
+  const users = DB.get('users', SEED_USERS);
+  const user = users.find(u => u.username.toLowerCase() === username.toLowerCase());
+
+  if (user) {
+    const hashedPassword = typeof sha256 !== 'undefined' ? sha256(newPassword) : newPassword;
+    user.password = hashedPassword;
+    DB.set('users', users);
+
+    logAuditAction('Redefiniu senha', `Usuário: ${user.name} (${username})`);
+    showToast(`Senha de ${user.name} redefinida com sucesso!`, 'success');
+    closeResetPasswordModal();
+    renderCadastroManager();
+  } else {
+    showToast('Usuário não encontrado.', 'error');
+  }
+}
+
+function regenerateActivationCode(matricula) {
+  try {
+    const preRegistered = DB.get('pre_registered', SEED_PRE_REGISTERED);
+    const item = preRegistered.find(p => p.matricula.toLowerCase() === matricula.toLowerCase());
+    if (item) {
+      if (item.codigoStatus !== 'pendente') {
+        showToast('Não é possível regenerar o código de uma conta já ativada.', 'error');
+        return;
+      }
+
+      const oldCode = item.codigoAtivacao;
+      const newCode = generateActivationCode();
+      item.codigoAtivacao = newCode;
+      DB.set('pre_registered', preRegistered);
+
+      logAuditAction('Regenerou código de ativação', `Aluno: ${item.nome} (${matricula}), Novo Código: ${newCode} (Antigo: ${oldCode})`);
+      showToast(`Código de ativação regenerado: ${newCode}`, 'success');
+      renderCadastroManager();
+    }
+  } catch (err) {
+    console.error("regenerateActivationCode Error:", err);
+  }
+}
+
+function deactivateAllUnusedCodes() {
+  try {
+    if (!confirm('Deseja desativar todos os códigos de ativação ainda pendentes? Alunos com estes códigos não conseguirão se cadastrar até que um novo código seja regenerado.')) {
+      return;
+    }
+
+    const preRegistered = DB.get('pre_registered', SEED_PRE_REGISTERED);
+    let count = 0;
+    preRegistered.forEach(p => {
+      if (p.codigoStatus === 'pendente') {
+        p.codigoStatus = 'expirado';
+        count++;
+      }
+    });
+
+    if (count > 0) {
+      DB.set('pre_registered', preRegistered);
+      logAuditAction('Desativou códigos pendentes em lote', `${count} códigos de ativação foram marcados como expirados.`);
+      showToast(`${count} códigos de ativação pendentes foram desativados.`, 'success');
+      renderCadastroManager();
+    } else {
+      showToast('Nenhum código pendente para desativar.', 'info');
+    }
+  } catch (err) {
+    console.error("deactivateAllUnusedCodes Error:", err);
   }
 }
 
