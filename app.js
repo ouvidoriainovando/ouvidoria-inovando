@@ -144,7 +144,7 @@ function restoreDefaultLogo() {
 // --- GERENCIAMENTO DE ESTADO E SINCRONIZAÇÃO CENTRAL (FIREBASE) ---
 let firebaseEnabled = false;
 let dbRef = null;
-let firebaseURL = localStorage.getItem('inovando_firebase_url') || '';
+let firebaseURL = localStorage.getItem('inovando_firebase_url') || 'https://ouvidoria-inovando-default-rtdb.firebaseio.com';
 
 // Cache local sincronizado
 const LOCAL_CACHE = {
