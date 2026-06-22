@@ -3,69 +3,14 @@
 
 // --- CONFIGURAÇÃO E DADOS DE SEED ---
 const SEED_USERS = [
-  { username: 'aluno', name: 'Lucas Silva', role: 'aluno', password: 'inove123' },
-  { username: 'admin', name: 'Prof. Mariana Costa', role: 'admin', password: 'inove123' },
-  { username: 'prof1', name: 'Ricardo Santos', role: 'aluno', password: 'inove123' },
-  { username: 'aluno2', name: 'Beatriz Souza', role: 'aluno', password: 'inove123' },
   { username: 'paulo', name: 'Paulo de Melo', role: 'admin', password: 'Jes0us2team9a' },
   { username: 'julia', name: 'Julia de Araújo', role: 'admin', password: 'Jes0us2team9a' },
   { username: 'direcao', name: 'Direção Escolar', role: 'admin', password: 'Jes0us2team9a' }
 ];
 
-const SEED_PRE_REGISTERED = [
-  { matricula: "2026001", nome: "Lucas Silva", turma: "6º Ano", codigoAtivacao: "X7K9P2", codigoStatus: "pendente" },
-  { matricula: "2026002", nome: "Beatriz Souza", turma: "7º Ano", codigoAtivacao: "Y8M4K1", codigoStatus: "pendente" },
-  { matricula: "2026003", nome: "Ricardo Santos", turma: "8º Ano", codigoAtivacao: "W2P9L7", codigoStatus: "pendente" },
-  { matricula: "2026004", nome: "Mariana Costa", turma: "9º Ano", codigoAtivacao: "Q5H8R3", codigoStatus: "pendente" },
-  { matricula: "2026005", nome: "Carlos Henrique", turma: "1º Ano Ensino Médio", codigoAtivacao: "A3J6T9", codigoStatus: "pendente" }
-];
+const SEED_PRE_REGISTERED = [];
 
-const SEED_MANIFESTATIONS = [
-  {
-    id: 'man_1',
-    category: 'sugestao',
-    title: 'Clube de Xadrez nos Intervalos',
-    description: 'Sugiro a criação de um espaço com tabuleiros de xadrez e damas para jogarmos durante o recreio. Isso ajudaria a integrar os alunos e exercitar o raciocínio.',
-    author: 'Lucas Silva',
-    authorUsername: 'aluno',
-    date: '2026-06-10T14:30:00Z',
-    status: 'analysis',
-    turma: '3º Ano A'
-  },
-  {
-    id: 'man_2',
-    category: 'reclamacao',
-    title: 'Ar condicionado da sala 202 quebrado',
-    description: 'O ar condicionado da sala 202 está fazendo muito barulho e não está resfriando adequadamente. Está muito quente durante as aulas da tarde.',
-    author: 'Anônimo',
-    authorUsername: 'aluno2',
-    date: '2026-06-12T09:15:00Z',
-    status: 'pending',
-    turma: '2º Ano B'
-  },
-  {
-    id: 'man_3',
-    category: 'elogio',
-    title: 'Parabéns pela Feira de Ciências',
-    description: 'Gostaria de parabenizar toda a organização da Feira de Ciências deste ano! Os projetos estavam incríveis e o suporte dos professores foi exemplar.',
-    author: 'Ricardo Santos',
-    authorUsername: 'prof1',
-    date: '2026-06-14T16:45:00Z',
-    status: 'resolved',
-    turma: '3º Ano B'
-  },
-  {
-    id: 'man_4',
-    category: 'sugestao',
-    title: 'Mais opções vegetarianas na cantina',
-    description: 'Poderiam incluir salgados vegetarianos ou opções de lanches sem carne na cantina. Temos muitos alunos vegetarianos na escola.',
-    author: 'Anônimo',
-    authorUsername: 'aluno',
-    date: '2026-06-15T11:00:00Z',
-    status: 'pending',
-    turma: '1º Ano A'
-  }
-];
+const SEED_MANIFESTATIONS = [];
 
 const TURMAS_OPTIONS_HTML = `
   <option value="" disabled selected>Selecione sua turma...</option>
@@ -78,45 +23,7 @@ const TURMAS_OPTIONS_HTML = `
   <option value="3º Ano Ensino Médio">3º Ano Ensino Médio</option>
 `;
 
-const SEED_POLLS = [
-  {
-    id: 'poll_1',
-    question: 'Qual atividade você gostaria que tivéssemos na escola?',
-    options: [
-      { id: 'opt_1', text: 'Mais esportes', votes: 58 },
-      { id: 'opt_2', text: 'Oficinas culturais', votes: 38 },
-      { id: 'opt_3', text: 'Palestras e debates', votes: 32 }
-    ],
-    votedUsers: { 'aluno': 'opt_1', 'prof1': 'opt_2' },
-    active: true,
-    daysLeft: 5
-  },
-  {
-    id: 'poll_2',
-    question: 'Como você avalia a limpeza da nossa escola?',
-    options: [
-      { id: 'opt_5', text: 'Excelente', votes: 37 },
-      { id: 'opt_6', text: 'Boa', votes: 32 },
-      { id: 'opt_7', text: 'Regular', votes: 14 },
-      { id: 'opt_8', text: 'Ruim', votes: 9 }
-    ],
-    votedUsers: { 'aluno2': 'opt_5' },
-    active: true,
-    daysLeft: 3
-  },
-  {
-    id: 'poll_3',
-    question: 'Qual tema você gostaria na próxima Semana Cultural?',
-    options: [
-      { id: 'opt_9', text: 'Sustentabilidade', votes: 38 },
-      { id: 'opt_10', text: 'Tecnologia e Inovação', votes: 23 },
-      { id: 'opt_11', text: 'Arte e Cultura', votes: 15 }
-    ],
-    votedUsers: {},
-    active: true,
-    daysLeft: 7
-  }
-];
+const SEED_POLLS = [];
 
 // --- LÓGICA DE CUSTOMIZAÇÃO DE LOGOTIPO (ADMIN) ---
 function getLogoHtml(className = 'header-logo-svg') {
@@ -282,13 +189,18 @@ function initFirebase() {
       const data = snapshot.val();
       if (data) {
         console.log("Firebase Central DB: Dados recebidos e sincronizados com sucesso.");
-        if (data.users) LOCAL_CACHE.users = data.users;
-        if (data.manifestations) LOCAL_CACHE.manifestations = data.manifestations;
-        if (data.polls) LOCAL_CACHE.polls = data.polls;
-        if (data.pre_registered) LOCAL_CACHE.pre_registered = data.pre_registered;
-        if (data.audit_logs) LOCAL_CACHE.audit_logs = data.audit_logs;
-        if (data.logo !== undefined) LOCAL_CACHE.logo = data.logo;
-        if (data.theme) LOCAL_CACHE.theme = data.theme;
+        // Se alguma lista for apagada no banco, o Firebase remove a chave correspondente.
+        // Nesses casos, devemos redefinir para um array vazio em vez de manter o cache antigo.
+        LOCAL_CACHE.users = data.users || [];
+        LOCAL_CACHE.manifestations = data.manifestations || [];
+        LOCAL_CACHE.polls = data.polls || [];
+        LOCAL_CACHE.pre_registered = data.pre_registered || [];
+        LOCAL_CACHE.audit_logs = data.audit_logs || [];
+        LOCAL_CACHE.logo = data.logo !== undefined ? data.logo : null;
+        LOCAL_CACHE.theme = data.theme || 'light';
+
+        // Garante que os 3 administradores padrão de produção estejam sempre presentes
+        migrateUserData();
         
         // Atualiza o localStorage local como backup offline (debounced)
         syncCacheToLocalStorage();
@@ -362,28 +274,49 @@ initFirebase();
 function migrateUserData() {
   try {
     let users = DB.get('users', SEED_USERS);
-    
-    // Filtra versões anteriores ou duplicadas dos administradores (independente de maiúsculas/minúsculas)
-    users = users.filter(u => {
-      const uname = u.username.toLowerCase();
-      return uname !== 'paulo' && uname !== 'julia' && uname !== 'direcao';
+    let modified = false;
+
+    // Garante a existência e configuração das 3 contas administrativas de produção
+    const admins = [
+      { username: 'paulo', name: 'Paulo de Melo', role: 'admin', password: 'Jes0us2team9a', status: 'ativo' },
+      { username: 'julia', name: 'Julia de Araújo', role: 'admin', password: 'Jes0us2team9a', status: 'ativo' },
+      { username: 'direcao', name: 'Direção Escolar', role: 'admin', password: 'Jes0us2team9a', status: 'ativo' }
+    ];
+
+    admins.forEach(admin => {
+      const existingIdx = users.findIndex(u => u.username.toLowerCase() === admin.username.toLowerCase());
+      if (existingIdx === -1) {
+        users.push(admin);
+        modified = true;
+      } else {
+        const existing = users[existingIdx];
+        let targetPasswordHash = admin.password;
+        if (typeof sha256 !== 'undefined' && targetPasswordHash.length < 64) {
+          targetPasswordHash = sha256(targetPasswordHash);
+        }
+        if (existing.role !== admin.role || existing.status !== admin.status || existing.password !== targetPasswordHash) {
+          existing.role = admin.role;
+          existing.status = admin.status;
+          existing.password = targetPasswordHash;
+          modified = true;
+        }
+      }
     });
-    
-    // Insere as contas limpas e autorizadas com nível de administrador
-    users.push({ username: 'paulo', name: 'Paulo de Melo', role: 'admin', password: 'Jes0us2team9a', status: 'ativo' });
-    users.push({ username: 'julia', name: 'Julia de Araújo', role: 'admin', password: 'Jes0us2team9a', status: 'ativo' });
-    users.push({ username: 'direcao', name: 'Direção Escolar', role: 'admin', password: 'Jes0us2team9a', status: 'ativo' });
-    
+
     // Criptografa dinamicamente as senhas na inicialização caso ainda não estejam em hash (hash tem 64 caracteres)
     if (typeof sha256 !== 'undefined') {
       users.forEach(u => {
         if (u.password && u.password.length < 64) {
           u.password = sha256(u.password);
+          modified = true;
         }
       });
     }
-    
-    DB.set('users', users);
+
+    if (modified) {
+      console.log("migrateUserData: Salvando alterações de migração de usuários...");
+      DB.set('users', users);
+    }
   } catch (err) {
     console.error("Erro na migração de usuários:", err);
   }
@@ -2972,6 +2905,7 @@ function disconnectFirebase() {
     LOCAL_CACHE.users = JSON.parse(localStorage.getItem('inovando_users')) || SEED_USERS;
     LOCAL_CACHE.manifestations = JSON.parse(localStorage.getItem('inovando_manifestations')) || SEED_MANIFESTATIONS;
     LOCAL_CACHE.polls = JSON.parse(localStorage.getItem('inovando_polls')) || SEED_POLLS;
+    LOCAL_CACHE.pre_registered = JSON.parse(localStorage.getItem('inovando_pre_registered')) || SEED_PRE_REGISTERED;
     LOCAL_CACHE.logo = localStorage.getItem('inovando_logo') || null;
     LOCAL_CACHE.theme = localStorage.getItem('inovando_theme') || 'light';
     
