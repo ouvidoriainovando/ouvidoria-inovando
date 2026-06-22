@@ -122,9 +122,9 @@ const SEED_POLLS = [
 function getLogoHtml(className = 'header-logo-svg') {
   const customLogo = localStorage.getItem('inovando_custom_logo');
   if (customLogo) {
-    return `<img src="${customLogo}" class="${className}" alt="Logo Ouvidoria" />`;
+    return `<img src="${customLogo}" class="${className}" alt="Logo Ouvidoria" loading="lazy" />`;
   }
-  return `<img src="logo.webp" class="${className}" alt="Logo Ouvidoria" />`;
+  return `<img src="logo.webp" class="${className}" alt="Logo Ouvidoria" loading="lazy" />`;
 }
 
 function uploadCustomLogo(event) {
@@ -166,6 +166,45 @@ const LOCAL_CACHE = {
   theme: localStorage.getItem('inovando_theme') || 'light'
 };
 
+let localStorageWriteTimeout = null;
+function syncCacheToLocalStorage() {
+  if (localStorageWriteTimeout) {
+    clearTimeout(localStorageWriteTimeout);
+  }
+  localStorageWriteTimeout = setTimeout(() => {
+    try {
+      for (const key in LOCAL_CACHE) {
+        if (LOCAL_CACHE[key] !== null && LOCAL_CACHE[key] !== undefined) {
+          const val = typeof LOCAL_CACHE[key] === 'string' ? LOCAL_CACHE[key] : JSON.stringify(LOCAL_CACHE[key]);
+          localStorage.setItem('inovando_' + key, val);
+        } else {
+          localStorage.removeItem('inovando_' + key);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to write to localStorage:", e);
+    }
+  }, 1000);
+}
+
+window.addEventListener('beforeunload', () => {
+  if (localStorageWriteTimeout) {
+    clearTimeout(localStorageWriteTimeout);
+    try {
+      for (const key in LOCAL_CACHE) {
+        if (LOCAL_CACHE[key] !== null && LOCAL_CACHE[key] !== undefined) {
+          const val = typeof LOCAL_CACHE[key] === 'string' ? LOCAL_CACHE[key] : JSON.stringify(LOCAL_CACHE[key]);
+          localStorage.setItem('inovando_' + key, val);
+        } else {
+          localStorage.removeItem('inovando_' + key);
+        }
+      }
+    } catch (e) {
+      console.error("beforeunload localStorage save error:", e);
+    }
+  }
+});
+
 const DB = {
   get: (key, fallback) => {
     if (LOCAL_CACHE[key] !== undefined && LOCAL_CACHE[key] !== null) {
@@ -176,10 +215,13 @@ const DB = {
   },
   set: (key, val) => {
     LOCAL_CACHE[key] = val;
-    localStorage.setItem('inovando_' + key, JSON.stringify(val));
+    syncCacheToLocalStorage();
     saveToFirebase(key, val);
   },
   reset: () => {
+    if (localStorageWriteTimeout) {
+      clearTimeout(localStorageWriteTimeout);
+    }
     localStorage.removeItem('inovando_users');
     localStorage.removeItem('inovando_manifestations');
     localStorage.removeItem('inovando_polls');
@@ -248,15 +290,8 @@ function initFirebase() {
         if (data.logo !== undefined) LOCAL_CACHE.logo = data.logo;
         if (data.theme) LOCAL_CACHE.theme = data.theme;
         
-        // Atualiza o localStorage local como backup offline
-        localStorage.setItem('inovando_users', JSON.stringify(LOCAL_CACHE.users));
-        localStorage.setItem('inovando_manifestations', JSON.stringify(LOCAL_CACHE.manifestations));
-        localStorage.setItem('inovando_polls', JSON.stringify(LOCAL_CACHE.polls));
-        localStorage.setItem('inovando_pre_registered', JSON.stringify(LOCAL_CACHE.pre_registered));
-        localStorage.setItem('inovando_audit_logs', JSON.stringify(LOCAL_CACHE.audit_logs));
-        if (LOCAL_CACHE.logo) localStorage.setItem('inovando_logo', LOCAL_CACHE.logo);
-        else localStorage.removeItem('inovando_logo');
-        localStorage.setItem('inovando_theme', LOCAL_CACHE.theme);
+        // Atualiza o localStorage local como backup offline (debounced)
+        syncCacheToLocalStorage();
         
         renderApp();
       } else {
@@ -1434,7 +1469,7 @@ function confirmDeleteUser() {
 
 function getUserAvatarHtml(user) {
   if (user && user.profilePic) {
-    return `<img src="${user.profilePic}" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />`;
+    return `<img src="${user.profilePic}" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" loading="lazy" />`;
   }
   if (!user || !user.name) return '';
   return user.name.split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
@@ -2091,6 +2126,143 @@ function renderElogio() {
   lucide.createIcons();
 }
 
+function renderManifestationsListHtml(filteredItems, isAdmin) {
+  if (filteredItems.length === 0) {
+    return `
+      <div style="text-align: center; padding: 60px 20px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 20px; color: var(--text-secondary);">
+        <i data-lucide="folder-open" style="font-size: 48px; margin-bottom: 15px; color: var(--primary);"></i>
+        <h3>Nenhuma manifestação encontrada</h3>
+      </div>
+    `;
+  }
+
+  return filteredItems.map(item => {
+    const catBadge = item.category === 'sugestao' ? 'Sugestão' : item.category === 'reclamacao' ? 'Reclamação' : 'Elogio';
+    let statusBadge = 'Pendente';
+    if (item.status === 'analysis') statusBadge = 'Em Análise';
+    if (item.status === 'resolved') statusBadge = 'Resolvido';
+
+    const comments = item.comments || [];
+    const sortedComments = [...comments].sort((a, b) => (b.likedBy || []).length - (a.likedBy || []).length);
+    const isCommentsOpen = openCommentSections.includes(item.id);
+
+    return `
+      <article class="manifestation-item" style="display: flex; flex-direction: column; gap: 15px;">
+        <div class="manifestation-card-body">
+          <div class="manifestation-content">
+            <div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">
+              <span class="badge ${item.category}">${catBadge}</span>
+              <span class="badge status-${item.status}">${statusBadge}</span>
+            </div>
+            <h3>${item.title}</h3>
+            <p style="margin-bottom: 15px;">${item.description}</p>
+            
+            <div class="manifestation-meta">
+              <span class="meta-item"><i data-lucide="user"></i> Autor: ${item.author}</span>
+              <span class="meta-item"><i data-lucide="calendar"></i> ${formatDate(item.date)}</span>
+              ${item.turma ? `<span class="meta-item"><i data-lucide="graduation-cap"></i> Turma: ${item.turma}</span>` : ''}
+              ${item.subcategory ? `<span class="meta-item"><i data-lucide="tag"></i> Categoria: ${item.subcategory}</span>` : ''}
+              ${item.location ? `<span class="meta-item"><i data-lucide="map-pin"></i> Local: ${item.location}</span>` : ''}
+              ${item.recipient ? `<span class="meta-item"><i data-lucide="award"></i> Elogiado: ${item.recipient}</span>` : ''}
+              
+              <button class="meta-item comment-toggle-btn" onclick="toggleCommentsSection('${item.id}')" style="background: none; border: none; cursor: pointer; color: var(--primary); display: inline-flex; align-items: center; gap: 4px; padding: 0; outline: none; font-weight: 700;">
+                <i data-lucide="message-circle" style="width: 14px; height: 14px;"></i> 
+                <span>Comentários (${comments.length})</span>
+              </button>
+            </div>
+
+            ${isAdmin ? `
+              <div class="admin-manifestation-controls" style="display:flex; gap:8px; border-top:1.5px dashed var(--border-color); padding-top:15px; margin-top:15px;">
+                <button class="btn btn-secondary" onclick="openManifestationModal('${item.id}')" style="padding: 8px 16px; font-size: 12px; width:auto; border-radius: 10px; display:inline-flex; align-items:center; gap:6px;">
+                  <i data-lucide="edit" style="width:14px; height:14px;"></i> Editar
+                </button>
+                <button class="btn" style="background: var(--primary-dark); padding: 8px 16px; font-size: 12px; width:auto; border-radius: 10px; display:inline-flex; align-items:center; gap:6px;" onclick="deleteManifestation('${item.id}')">
+                  <i data-lucide="trash-2" style="width:14px; height:14px;"></i> Excluir
+                </button>
+              </div>
+            ` : ''}
+          </div>
+
+          ${isAdmin ? `
+            <div class="manifestation-actions">
+              <label style="font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase;">Mudar Status</label>
+              <select class="filter-select" onchange="updateManifestationStatus('${item.id}', this.value)" style="padding: 6px 12px; font-size: 12px;">
+                <option value="pending" ${item.status === 'pending' ? 'selected' : ''}>Pendente</option>
+                <option value="analysis" ${item.status === 'analysis' ? 'selected' : ''}>Em Análise</option>
+                <option value="resolved" ${item.status === 'resolved' ? 'selected' : ''}>Resolvido</option>
+              </select>
+            </div>
+          ` : `
+            ${item.authorUsername === currentUser.username ? `
+              <div style="font-size: 12px; color: var(--primary); font-weight: 700; display: flex; align-items: center; gap: 4px;">
+                <i data-lucide="check-circle"></i> Meu Envio
+              </div>
+            ` : ''}
+          `}
+        </div>
+
+        <!-- Seção de Comentários Expandida -->
+        <div class="comments-container" style="display: ${isCommentsOpen ? 'block' : 'none'}; border-top: 1px solid var(--border-color); padding-top: 15px;">
+          <h4 style="font-size: 14px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">
+            <i data-lucide="message-square" style="width: 15px; height: 15px; color: var(--primary);"></i>
+            Discussão (${comments.length})
+          </h4>
+
+          <!-- Lista de Comentários -->
+          <div class="comments-list" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 15px; max-height: 280px; overflow-y: auto; padding-right: 5px;">
+            ${sortedComments.length === 0 ? `
+              <p style="color: var(--text-secondary); font-size: 12px; font-style: italic; text-align: center; padding: 10px 0;">
+                Nenhum comentário ainda. Seja o primeiro a comentar!
+              </p>
+            ` : sortedComments.map((c, idx) => {
+              const hasLiked = currentUser && c.likedBy && c.likedBy.includes(currentUser.username);
+              const likesCount = c.likedBy ? c.likedBy.length : 0;
+              const isTopComment = likesCount > 0 && idx === 0;
+
+              return `
+                <div class="comment-item ${isTopComment ? 'top-comment' : ''}" style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); border-radius: 12px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: start; gap: 15px;">
+                  <div style="flex-grow: 1;">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap;">
+                      <span style="font-weight: 700; font-size: 12px; color: var(--text-main);">${c.author}</span>
+                      <span style="font-size: 10px; color: var(--text-secondary);">${formatDate(c.date)}</span>
+                      ${isTopComment ? `
+                        <span class="badge" style="background: rgba(214, 158, 46, 0.1); color: #D69E2E; font-size: 8px; padding: 1px 4px; border: 1px solid rgba(214, 158, 46, 0.2); text-transform: none; border-radius: 4px; display: inline-flex; align-items: center; gap: 2px;">
+                          <i data-lucide="crown" style="width: 10px; height: 10px;"></i>Destaque da Direção
+                        </span>
+                      ` : ''}
+                    </div>
+                    <p style="font-size: 12.5px; line-height: 1.4; color: var(--text-main); margin: 0;">${c.text}</p>
+                  </div>
+
+                  <div style="display: flex; align-items: center; gap: 10px;">
+                    ${isAdmin ? `
+                      <button class="comment-delete-btn" onclick="deleteComment('${item.id}', '${c.id}')" title="Excluir comentário" style="background: none; border: none; cursor: pointer; color: var(--text-secondary); display: flex; align-items: center; padding: 2px; outline: none; transition: color 0.2s;">
+                        <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+                      </button>
+                    ` : ''}
+                    <button class="comment-like-btn" onclick="toggleLikeComment('${item.id}', '${c.id}')" style="background: none; border: none; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 0; outline: none;">
+                      <i data-lucide="heart" style="width: 14px; height: 14px; transition: transform 0.2s; ${hasLiked ? 'fill: var(--primary); color: var(--primary);' : 'color: var(--text-secondary);'}" class="heart-icon"></i>
+                      <span style="font-size: 10px; font-weight: 700; color: ${hasLiked ? 'var(--primary)' : 'var(--text-secondary)'};">${likesCount}</span>
+                    </button>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+
+          <!-- Novo Comentário Form -->
+          <form onsubmit="submitComment(event, '${item.id}')" style="display: flex; gap: 10px; align-items: center;">
+            <input type="text" id="comment-input-${item.id}" placeholder="Escreva um comentário..." required style="flex-grow: 1; padding: 8px 14px; background: rgba(0,0,0,0.15); border: 1px solid var(--border-color); border-radius: 8px; outline: none; font-size: 12px; color: var(--text-main);">
+            <button type="submit" class="btn" style="width: auto; padding: 8px 14px; font-size: 12px; height: 34px; display: inline-flex; align-items: center; gap: 4px; border-radius: 8px;">
+              <i data-lucide="send" style="width: 12px; height: 12px;"></i>
+            </button>
+          </form>
+        </div>
+      </article>
+    `;
+  }).join('');
+}
+
 function renderOuvidoria() {
   const container = document.getElementById('main-content-area');
   const manifestations = DB.get('manifestations', SEED_MANIFESTATIONS);
@@ -2105,6 +2277,15 @@ function renderOuvidoria() {
     const isOwnerOrAdmin = isAdmin || item.authorUsername === currentUser.username || item.author === 'Anônimo';
     return matchCategory && matchStatus && matchSearch && isOwnerOrAdmin;
   });
+
+  const listContainer = document.getElementById('manifestations-list-container');
+  if (listContainer) {
+    listContainer.innerHTML = renderManifestationsListHtml(filteredItems, isAdmin);
+    if (typeof lucide !== 'undefined' && lucide.createIcons) {
+      lucide.createIcons();
+    }
+    return;
+  }
 
   container.innerHTML = `
     <div class="top-bar" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-color); padding-bottom:20px; margin-bottom:25px;">
@@ -2156,137 +2337,8 @@ function renderOuvidoria() {
       </div>
     </div>
 
-    <div class="manifestations-list">
-      ${filteredItems.length === 0 ? `
-        <div style="text-align: center; padding: 60px 20px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 20px; color: var(--text-secondary);">
-          <i data-lucide="folder-open" style="font-size: 48px; margin-bottom: 15px; color: var(--primary);"></i>
-          <h3>Nenhuma manifestação encontrada</h3>
-        </div>
-      ` : filteredItems.map(item => {
-        const catBadge = item.category === 'sugestao' ? 'Sugestão' : item.category === 'reclamacao' ? 'Reclamação' : 'Elogio';
-        let statusBadge = 'Pendente';
-        if (item.status === 'analysis') statusBadge = 'Em Análise';
-        if (item.status === 'resolved') statusBadge = 'Resolvido';
-
-        const comments = item.comments || [];
-        const sortedComments = [...comments].sort((a, b) => (b.likedBy || []).length - (a.likedBy || []).length);
-        const isCommentsOpen = openCommentSections.includes(item.id);
-
-        return `
-          <article class="manifestation-item" style="display: flex; flex-direction: column; gap: 15px;">
-            <div class="manifestation-card-body">
-              <div class="manifestation-content">
-                <div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">
-                  <span class="badge ${item.category}">${catBadge}</span>
-                  <span class="badge status-${item.status}">${statusBadge}</span>
-                </div>
-                <h3>${item.title}</h3>
-                <p style="margin-bottom: 15px;">${item.description}</p>
-                
-                <div class="manifestation-meta">
-                  <span class="meta-item"><i data-lucide="user"></i> Autor: ${item.author}</span>
-                  <span class="meta-item"><i data-lucide="calendar"></i> ${formatDate(item.date)}</span>
-                  ${item.turma ? `<span class="meta-item"><i data-lucide="graduation-cap"></i> Turma: ${item.turma}</span>` : ''}
-                  ${item.subcategory ? `<span class="meta-item"><i data-lucide="tag"></i> Categoria: ${item.subcategory}</span>` : ''}
-                  ${item.location ? `<span class="meta-item"><i data-lucide="map-pin"></i> Local: ${item.location}</span>` : ''}
-                  ${item.recipient ? `<span class="meta-item"><i data-lucide="award"></i> Elogiado: ${item.recipient}</span>` : ''}
-                  
-                  <button class="meta-item comment-toggle-btn" onclick="toggleCommentsSection('${item.id}')" style="background: none; border: none; cursor: pointer; color: var(--primary); display: inline-flex; align-items: center; gap: 4px; padding: 0; outline: none; font-weight: 700;">
-                    <i data-lucide="message-circle" style="width: 14px; height: 14px;"></i> 
-                    <span>Comentários (${comments.length})</span>
-                  </button>
-                </div>
-
-                ${isAdmin ? `
-                  <div class="admin-manifestation-controls" style="display:flex; gap:8px; border-top:1.5px dashed var(--border-color); padding-top:15px; margin-top:15px;">
-                    <button class="btn btn-secondary" onclick="openManifestationModal('${item.id}')" style="padding: 8px 16px; font-size: 12px; width:auto; border-radius: 10px; display:inline-flex; align-items:center; gap:6px;">
-                      <i data-lucide="edit" style="width:14px; height:14px;"></i> Editar
-                    </button>
-                    <button class="btn" style="background: var(--primary-dark); padding: 8px 16px; font-size: 12px; width:auto; border-radius: 10px; display:inline-flex; align-items:center; gap:6px;" onclick="deleteManifestation('${item.id}')">
-                      <i data-lucide="trash-2" style="width:14px; height:14px;"></i> Excluir
-                    </button>
-                  </div>
-                ` : ''}
-              </div>
-
-              ${isAdmin ? `
-                <div class="manifestation-actions">
-                  <label style="font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase;">Mudar Status</label>
-                  <select class="filter-select" onchange="updateManifestationStatus('${item.id}', this.value)" style="padding: 6px 12px; font-size: 12px;">
-                    <option value="pending" ${item.status === 'pending' ? 'selected' : ''}>Pendente</option>
-                    <option value="analysis" ${item.status === 'analysis' ? 'selected' : ''}>Em Análise</option>
-                    <option value="resolved" ${item.status === 'resolved' ? 'selected' : ''}>Resolvido</option>
-                  </select>
-                </div>
-              ` : `
-                ${item.authorUsername === currentUser.username ? `
-                  <div style="font-size: 12px; color: var(--primary); font-weight: 700; display: flex; align-items: center; gap: 4px;">
-                    <i data-lucide="check-circle"></i> Meu Envio
-                  </div>
-                ` : ''}
-              `}
-            </div>
-
-            <!-- Seção de Comentários Expandida -->
-            <div class="comments-container" style="display: ${isCommentsOpen ? 'block' : 'none'}; border-top: 1px solid var(--border-color); padding-top: 15px;">
-              <h4 style="font-size: 14px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">
-                <i data-lucide="message-square" style="width: 15px; height: 15px; color: var(--primary);"></i>
-                Discussão (${comments.length})
-              </h4>
-
-              <!-- Lista de Comentários -->
-              <div class="comments-list" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 15px; max-height: 280px; overflow-y: auto; padding-right: 5px;">
-                ${sortedComments.length === 0 ? `
-                  <p style="color: var(--text-secondary); font-size: 12px; font-style: italic; text-align: center; padding: 10px 0;">
-                    Nenhum comentário ainda. Seja o primeiro a comentar!
-                  </p>
-                ` : sortedComments.map((c, idx) => {
-                  const hasLiked = currentUser && c.likedBy && c.likedBy.includes(currentUser.username);
-                  const likesCount = c.likedBy ? c.likedBy.length : 0;
-                  const isTopComment = likesCount > 0 && idx === 0;
-
-                  return `
-                    <div class="comment-item ${isTopComment ? 'top-comment' : ''}" style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); border-radius: 12px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: start; gap: 15px;">
-                      <div style="flex-grow: 1;">
-                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap;">
-                          <span style="font-weight: 700; font-size: 12px; color: var(--text-main);">${c.author}</span>
-                          <span style="font-size: 10px; color: var(--text-secondary);">${formatDate(c.date)}</span>
-                          ${isTopComment ? `
-                            <span class="badge" style="background: rgba(214, 158, 46, 0.1); color: #D69E2E; font-size: 8px; padding: 1px 4px; border: 1px solid rgba(214, 158, 46, 0.2); text-transform: none; border-radius: 4px; display: inline-flex; align-items: center; gap: 2px;">
-                              <i data-lucide="crown" style="width: 10px; height: 10px;"></i>Destaque da Direção
-                            </span>
-                          ` : ''}
-                        </div>
-                        <p style="font-size: 12.5px; line-height: 1.4; color: var(--text-main); margin: 0;">${c.text}</p>
-                      </div>
-
-                      <div style="display: flex; align-items: center; gap: 10px;">
-                        ${isAdmin ? `
-                          <button class="comment-delete-btn" onclick="deleteComment('${item.id}', '${c.id}')" title="Excluir comentário" style="background: none; border: none; cursor: pointer; color: var(--text-secondary); display: flex; align-items: center; padding: 2px; outline: none; transition: color 0.2s;">
-                            <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
-                          </button>
-                        ` : ''}
-                        <button class="comment-like-btn" onclick="toggleLikeComment('${item.id}', '${c.id}')" style="background: none; border: none; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 0; outline: none;">
-                          <i data-lucide="heart" style="width: 14px; height: 14px; transition: transform 0.2s; ${hasLiked ? 'fill: var(--primary); color: var(--primary);' : 'color: var(--text-secondary);'}" class="heart-icon"></i>
-                          <span style="font-size: 10px; font-weight: 700; color: ${hasLiked ? 'var(--primary)' : 'var(--text-secondary)'};">${likesCount}</span>
-                        </button>
-                      </div>
-                    </div>
-                  `;
-                }).join('')}
-              </div>
-
-              <!-- Novo Comentário Form -->
-              <form onsubmit="submitComment(event, '${item.id}')" style="display: flex; gap: 10px; align-items: center;">
-                <input type="text" id="comment-input-${item.id}" placeholder="Escreva um comentário..." required style="flex-grow: 1; padding: 8px 14px; background: rgba(0,0,0,0.15); border: 1px solid var(--border-color); border-radius: 8px; outline: none; font-size: 12px; color: var(--text-main);">
-                <button type="submit" class="btn" style="width: auto; padding: 8px 14px; font-size: 12px; height: 34px; display: inline-flex; align-items: center; gap: 4px; border-radius: 8px;">
-                  <i data-lucide="send" style="width: 12px; height: 12px;"></i>
-                </button>
-              </form>
-            </div>
-          </article>
-        `;
-      }).join('')}
+    <div id="manifestations-list-container" class="manifestations-list">
+      ${renderManifestationsListHtml(filteredItems, isAdmin)}
     </div>
   `;
   lucide.createIcons();
@@ -3173,6 +3225,62 @@ function handleCadastro(e) {
   navigateTo('login');
 }
 
+function renderUserRowsHtml(filteredUsers) {
+  if (filteredUsers.length === 0) {
+    return `
+      <tr>
+        <td colspan="8" style="text-align: center; color: var(--text-secondary); padding: 30px;">Nenhum usuário cadastrado correspondente encontrado.</td>
+      </tr>
+    `;
+  }
+
+  return filteredUsers.map(u => {
+    const isSelf = u.username === currentUser.username;
+    const dateCadastro = u.created_at ? formatDate(u.created_at) : 'Dados Semente';
+    const dateLastAccess = u.lastAccess ? formatDate(u.lastAccess) : 'Nunca';
+    const countVotes = getUserVotesCount(u.username);
+    const isBlocked = u.status === 'bloqueado';
+    const escapedName = (u.name || '').replace(new RegExp("'", "g"), "\\'");
+
+    return `
+      <tr>
+        <td style="font-weight: 700;">${u.username}</td>
+        <td>${u.name}</td>
+        <td>
+          <span class="badge ${u.role === 'admin' ? 'reclamacao' : 'sugestao'}" style="font-size: 9px;">
+            ${u.turma || (u.role === 'admin' ? 'Administração' : 'Não Definido')}
+          </span>
+        </td>
+        <td>${dateCadastro}</td>
+        <td>${dateLastAccess}</td>
+        <td style="text-align: center; font-weight: 700;">${countVotes}</td>
+        <td>
+          <span class="badge ${isBlocked ? 'status-pending' : 'status-resolved'}" style="font-size: 9px;">
+            ${isBlocked ? 'Bloqueada' : 'Ativa'}
+          </span>
+        </td>
+        <td>
+          <div style="display: flex; gap: 6px;">
+            ${isSelf ? `
+              <span style="font-size: 11px; color: var(--text-secondary); font-style: italic;">Sua Conta</span>
+            ` : `
+              <button class="btn btn-secondary" onclick="toggleUserBlockStatus('${u.username}')" style="padding: 6px 10px; font-size: 11px; width: auto; border-color: ${isBlocked ? 'var(--elogio)' : 'var(--reclamacao)'}; color: ${isBlocked ? 'var(--elogio)' : 'var(--reclamacao)'}; display: inline-flex; align-items: center; gap: 4px; background: transparent; height: 30px;">
+                <i data-lucide="${isBlocked ? 'unlock' : 'lock'}"></i> ${isBlocked ? 'Desbloquear' : 'Bloquear'}
+              </button>
+              <button class="btn btn-secondary" onclick="openResetPasswordModal('${u.username}', '${escapedName}')" style="padding: 6px 10px; font-size: 11px; width: auto; display: inline-flex; align-items: center; gap: 4px; height: 30px;">
+                <i data-lucide="key-round"></i> Senha
+              </button>
+              <button class="btn btn-secondary btn-danger" onclick="openDeleteUserModal('${u.username}', '${escapedName}')" style="padding: 6px 10px; font-size: 11px; width: auto; display: inline-flex; align-items: center; gap: 4px; height: 30px;">
+                <i data-lucide="trash-2"></i> Excluir
+              </button>
+            `}
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
 function renderCadastroManager() {
   const container = document.getElementById('main-content-area');
   if (!container) return;
@@ -3194,6 +3302,15 @@ function renderCadastroManager() {
            (u.username || '').toLowerCase().includes(term) ||
            (u.turma || '').toLowerCase().includes(term);
   });
+
+  const tbody = document.getElementById('cadastro-manager-users-table-tbody');
+  if (tbody) {
+    tbody.innerHTML = renderUserRowsHtml(filteredUsers);
+    if (typeof lucide !== 'undefined' && lucide.createIcons) {
+      lucide.createIcons();
+    }
+    return;
+  }
 
   container.innerHTML = `
     <div class="top-bar" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-color); padding-bottom:20px; margin-bottom:25px; flex-wrap: wrap; gap: 15px;">
@@ -3273,55 +3390,8 @@ function renderCadastroManager() {
                 <th>Ações</th>
               </tr>
             </thead>
-            <tbody>
-              ${filteredUsers.length === 0 ? `
-                <tr>
-                  <td colspan="8" style="text-align: center; color: var(--text-secondary); padding: 30px;">Nenhum usuário cadastrado correspondente encontrado.</td>
-                </tr>
-              ` : filteredUsers.map(u => {
-                const isSelf = u.username === currentUser.username;
-                const dateCadastro = u.created_at ? formatDate(u.created_at) : 'Dados Semente';
-                const dateLastAccess = u.lastAccess ? formatDate(u.lastAccess) : 'Nunca';
-                const countVotes = getUserVotesCount(u.username);
-                const isBlocked = u.status === 'bloqueado';
-
-                return `
-                  <tr>
-                    <td style="font-weight: 700;">${u.username}</td>
-                    <td>${u.name}</td>
-                    <td>
-                      <span class="badge ${u.role === 'admin' ? 'reclamacao' : 'sugestao'}" style="font-size: 9px;">
-                        ${u.turma || (u.role === 'admin' ? 'Administração' : 'Não Definido')}
-                      </span>
-                    </td>
-                    <td>${dateCadastro}</td>
-                    <td>${dateLastAccess}</td>
-                    <td style="text-align: center; font-weight: 700;">${countVotes}</td>
-                    <td>
-                      <span class="badge ${isBlocked ? 'status-pending' : 'status-resolved'}" style="font-size: 9px;">
-                        ${isBlocked ? 'Bloqueada' : 'Ativa'}
-                      </span>
-                    </td>
-                    <td>
-                      <div style="display: flex; gap: 6px;">
-                        ${isSelf ? `
-                          <span style="font-size: 11px; color: var(--text-secondary); font-style: italic;">Sua Conta</span>
-                        ` : `
-                          <button class="btn btn-secondary" onclick="toggleUserBlockStatus('${u.username}')" style="padding: 6px 10px; font-size: 11px; width: auto; border-color: ${isBlocked ? 'var(--elogio)' : 'var(--reclamacao)'}; color: ${isBlocked ? 'var(--elogio)' : 'var(--reclamacao)'}; display: inline-flex; align-items: center; gap: 4px; background: transparent; height: 30px;">
-                            <i data-lucide="${isBlocked ? 'unlock' : 'lock'}"></i> ${isBlocked ? 'Desbloquear' : 'Bloquear'}
-                          </button>
-                          <button class="btn btn-secondary" onclick="openResetPasswordModal('${u.username}', '${u.name.replace(/'/g, "\\'")}')" style="padding: 6px 10px; font-size: 11px; width: auto; display: inline-flex; align-items: center; gap: 4px; height: 30px;">
-                            <i data-lucide="key-round"></i> Senha
-                          </button>
-                          <button class="btn btn-secondary btn-danger" onclick="openDeleteUserModal('${u.username}', '${u.name.replace(/'/g, "\\'")}')" style="padding: 6px 10px; font-size: 11px; width: auto; display: inline-flex; align-items: center; gap: 4px; height: 30px;">
-                            <i data-lucide="trash-2"></i> Excluir
-                          </button>
-                        `}
-                      </div>
-                    </td>
-                  </tr>
-                `;
-              }).join('')}
+            <tbody id="cadastro-manager-users-table-tbody">
+              ${renderUserRowsHtml(filteredUsers)}
             </tbody>
           </table>
         </div>
