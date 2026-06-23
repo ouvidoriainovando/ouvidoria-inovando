@@ -185,7 +185,19 @@ function initFirebase() {
     firebaseEnabled = true;
     console.log("Firebase Central DB: Inicializado em " + firebaseURL);
     
+    let hasLoadedData = false;
+    const connectionTimeout = setTimeout(() => {
+      if (!hasLoadedData) {
+        console.warn("Firebase Central DB: Limite de tempo de conexão atingido. Operando em modo local temporariamente.");
+        firebaseEnabled = false;
+        renderApp();
+      }
+    }, 2500);
+    
     dbRef.on('value', (snapshot) => {
+      hasLoadedData = true;
+      clearTimeout(connectionTimeout);
+      firebaseEnabled = true;
       const data = snapshot.val();
       if (data) {
         console.log("Firebase Central DB: Dados recebidos e sincronizados com sucesso.");
@@ -220,6 +232,8 @@ function initFirebase() {
         });
       }
     }, (error) => {
+      hasLoadedData = true;
+      clearTimeout(connectionTimeout);
       console.error("Firebase Central DB: Erro de leitura:", error);
       firebaseEnabled = false;
       showToast("Falha na sincronização do banco. Operando no modo local.", "error");
