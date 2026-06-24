@@ -2547,10 +2547,11 @@ function renderAdmin() {
                       <i data-lucide="user" style="width: 14px; height: 14px;"></i> Conta Atual
                     </span>
                   ` : `
-                    <div style="display: flex; gap: 6px;">
-                      <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px; width: auto; display: inline-flex; align-items: center; gap: 4px; border-color: var(--primary); color: var(--primary); background: transparent;" onclick="toggleUserRole('${u.username}')">
-                        <i data-lucide="${u.role === 'admin' ? 'user-minus' : 'user-plus'}" style="width: 14px; height: 14px;"></i> ${u.role === 'admin' ? 'Rebaixar' : 'Adm'}
-                      </button>
+                    <div style="display: flex; gap: 6px; align-items: center;">
+                      <select onchange="changeUserRole('${u.username}', this.value)" style="height: 30px; font-size: 11px; padding: 0 8px; width: 130px; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer;">
+                        <option value="aluno" ${u.role === 'aluno' ? 'selected' : ''}>Aluno</option>
+                        <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Administrador</option>
+                      </select>
                       <button class="btn btn-secondary btn-danger" style="padding: 6px 12px; font-size: 12px; width: auto; display: inline-flex; align-items: center; gap: 4px;" onclick="openDeleteUserModal('${u.username}', '${u.name.replace(/'/g, "\\'")}')">
                         <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i> Excluir
                       </button>
@@ -3215,11 +3216,14 @@ function renderUserRowsHtml(filteredUsers) {
         </td>
         <td>
           ${isSelf ? `
-            <span style="font-size: 11px; color: var(--text-secondary); font-style: italic;">N/A</span>
+            <select disabled style="height: 30px; font-size: 11px; padding: 0 8px; width: 130px; background: rgba(255,255,255,0.05); color: var(--text-secondary); border: 1px solid var(--border-color); border-radius: 6px; cursor: not-allowed;">
+              <option value="admin" selected>Administrador</option>
+            </select>
           ` : `
-            <button class="btn btn-secondary" onclick="toggleUserRole('${u.username}')" style="padding: 6px 10px; font-size: 11px; width: auto; border-color: var(--primary); color: var(--primary); display: inline-flex; align-items: center; gap: 4px; background: transparent; height: 30px;">
-              <i data-lucide="${u.role === 'admin' ? 'user-minus' : 'user-plus'}"></i> ${u.role === 'admin' ? 'Rebaixar' : 'Adm'}
-            </button>
+            <select onchange="changeUserRole('${u.username}', this.value)" style="height: 30px; font-size: 11px; padding: 0 8px; width: 130px; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer;">
+              <option value="aluno" ${u.role === 'aluno' ? 'selected' : ''}>Aluno</option>
+              <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Administrador</option>
+            </select>
           `}
         </td>
         <td>
@@ -3657,7 +3661,7 @@ function toggleUserBlockStatus(username) {
   }
 }
 
-function toggleUserRole(username) {
+function changeUserRole(username, newRole) {
   try {
     const users = DB.get('users', SEED_USERS);
     const userIdx = users.findIndex(u => u.username.toLowerCase() === username.toLowerCase());
@@ -3668,13 +3672,17 @@ function toggleUserRole(username) {
 
     const user = users[userIdx];
     const oldRole = user.role;
-    const newRole = oldRole === 'admin' ? 'aluno' : 'admin';
+
+    if (oldRole === newRole) return; // Nenhuma alteração real
 
     // Se estiver rebaixando um administrador, certifique-se de que há pelo menos mais um admin
-    if (oldRole === 'admin') {
+    if (oldRole === 'admin' && newRole === 'aluno') {
       const adminsCount = users.filter(u => u.role === 'admin').length;
       if (adminsCount <= 1) {
         showToast('Não é possível rebaixar o único administrador do sistema.', 'error');
+        // Re-renderiza para redefinir o seletor no DOM
+        if (currentView === 'cadastro_manager') renderCadastroManager();
+        else if (currentView === 'admin') renderAdmin();
         return;
       }
     }
@@ -3683,6 +3691,9 @@ function toggleUserRole(username) {
     const roleNameNew = newRole === 'admin' ? 'Administrador' : 'Aluno';
 
     if (!confirm(`Tem certeza que deseja alterar o cargo de ${user.name} de ${roleNameOld} para ${roleNameNew}?`)) {
+      // Re-renderiza para desfazer a alteração visual no seletor do DOM
+      if (currentView === 'cadastro_manager') renderCadastroManager();
+      else if (currentView === 'admin') renderAdmin();
       return;
     }
 
@@ -3707,8 +3718,10 @@ function toggleUserRole(username) {
       renderApp();
     }
   } catch (err) {
-    console.error("toggleUserRole Error:", err);
+    console.error("changeUserRole Error:", err);
     showToast('Erro ao alterar cargo do usuário.', 'error');
+    if (currentView === 'cadastro_manager') renderCadastroManager();
+    else if (currentView === 'admin') renderAdmin();
   }
 }
 
