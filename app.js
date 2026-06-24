@@ -172,6 +172,170 @@ const DB = {
   }
 };
 
+function recalculatePollVotes(poll) {
+  if (!poll.options) return;
+  poll.options.forEach(opt => {
+    opt.votes = 0;
+  });
+  if (poll.votedUsers) {
+    Object.keys(poll.votedUsers).forEach(username => {
+      const voteVal = poll.votedUsers[username];
+      const optId = voteVal && typeof voteVal === 'object' ? voteVal.optionId : voteVal;
+      if (optId) {
+        const option = poll.options.find(o => o.id === optId);
+        if (option) {
+          option.votes += 1;
+        }
+      }
+    });
+  }
+}
+
+function mergeUsers(fbUsers, localUsers) {
+  const merged = [];
+  const localList = Array.isArray(localUsers) ? localUsers : [];
+  const fbList = Array.isArray(fbUsers) ? fbUsers : [];
+
+  fbList.forEach(fu => {
+    const lu = localList.find(u => u.username.toLowerCase() === fu.username.toLowerCase());
+    if (lu) {
+      const mergedUser = { ...lu, ...fu };
+      if (fu.status === 'bloqueado' || lu.status === 'bloqueado') {
+        mergedUser.status = 'bloqueado';
+      }
+      if (lu.lastAccess && (!fu.lastAccess || new Date(lu.lastAccess) > new Date(fu.lastAccess))) {
+        mergedUser.lastAccess = lu.lastAccess;
+      }
+      merged.push(mergedUser);
+    } else {
+      merged.push(fu);
+    }
+  });
+
+  localList.forEach(lu => {
+    if (!merged.some(mu => mu.username.toLowerCase() === lu.username.toLowerCase())) {
+      merged.push(lu);
+    }
+  });
+
+  return merged;
+}
+
+function mergeManifestations(fbMans, localMans) {
+  const merged = [];
+  const localList = Array.isArray(localMans) ? localMans : [];
+  const fbList = Array.isArray(fbMans) ? fbMans : [];
+
+  fbList.forEach(fm => {
+    const lm = localList.find(m => m.id === fm.id);
+    if (lm) {
+      const mergedComments = [];
+      const fmComments = fm.comments || [];
+      const lmComments = lm.comments || [];
+      
+      fmComments.forEach(fc => {
+        const lc = lmComments.find(c => c.id === fc.id);
+        if (lc) {
+          const mergedLikes = [...new Set([...(fc.likedBy || []), ...(lc.likedBy || [])])];
+          mergedComments.push({ ...fc, likedBy: mergedLikes });
+        } else {
+          mergedComments.push(fc);
+        }
+      });
+      
+      lmComments.forEach(lc => {
+        if (!mergedComments.some(mc => mc.id === lc.id)) {
+          mergedComments.push(lc);
+        }
+      });
+      
+      merged.push({ ...fm, comments: mergedComments });
+    } else {
+      merged.push(fm);
+    }
+  });
+
+  localList.forEach(lm => {
+    if (!merged.some(mm => mm.id === lm.id)) {
+      merged.push(lm);
+    }
+  });
+
+  return merged;
+}
+
+function mergePolls(fbPolls, localPolls) {
+  const merged = [];
+  const localList = Array.isArray(localPolls) ? localPolls : [];
+  const fbList = Array.isArray(fbPolls) ? fbPolls : [];
+
+  fbList.forEach(fp => {
+    const lp = localList.find(p => p.id === fp.id);
+    if (lp) {
+      const mergedVotedUsers = { ...(fp.votedUsers || {}), ...(lp.votedUsers || {}) };
+      const mergedPoll = { ...fp, votedUsers: mergedVotedUsers };
+      recalculatePollVotes(mergedPoll);
+      merged.push(mergedPoll);
+    } else {
+      recalculatePollVotes(fp);
+      merged.push(fp);
+    }
+  });
+
+  localList.forEach(lp => {
+    if (!merged.some(mp => mp.id === lp.id)) {
+      recalculatePollVotes(lp);
+      merged.push(lp);
+    }
+  });
+
+  return merged;
+}
+
+function syncCurrentUserSession() {
+  if (!currentUser) return;
+  const usersList = LOCAL_CACHE.users || DB.get('users', SEED_USERS);
+  const dbUser = usersList.find(u => u.username.toLowerCase() === currentUser.username.toLowerCase());
+  if (dbUser) {
+    if (dbUser.status === 'bloqueado') {
+      showToast('Sua conta foi bloqueada pela administração.', 'error');
+      handleLogout();
+      return;
+    }
+    
+    let sessionChanged = false;
+    if (dbUser.role !== currentUser.role) {
+      currentUser.role = dbUser.role;
+      sessionChanged = true;
+    }
+    if (dbUser.name !== currentUser.name) {
+      currentUser.name = dbUser.name;
+      sessionChanged = true;
+    }
+    if (dbUser.tipo_usuario !== currentUser.tipo_usuario) {
+      currentUser.tipo_usuario = dbUser.tipo_usuario || (dbUser.role === 'admin' ? 'administrador' : 'aluno');
+      sessionChanged = true;
+    }
+    if (dbUser.turma !== currentUser.turma) {
+      currentUser.turma = dbUser.turma || '';
+      sessionChanged = true;
+    }
+    if (dbUser.profilePic !== currentUser.profilePic) {
+      currentUser.profilePic = dbUser.profilePic || null;
+      sessionChanged = true;
+    }
+    
+    if (sessionChanged) {
+      localStorage.setItem('inovando_session', JSON.stringify(currentUser));
+      const isAdmin = currentUser.role === 'admin';
+      if ((currentView === 'admin' || currentView === 'cadastro_manager') && !isAdmin) {
+        currentView = 'home';
+      }
+      renderApp();
+    }
+  }
+}
+
 function healUserDatabase() {
   try {
     const users = LOCAL_CACHE.users || [];
@@ -300,36 +464,10 @@ function initFirebase() {
         console.log("Firebase Central DB: Dados recebidos e sincronizados com sucesso.");
         
         if (isFirstLoad) {
-          // Mesclagem segura inicial para preservar cadastros offline locais
-          const localUsers = LOCAL_CACHE.users || [];
-          const fbUsers = data.users || [];
-          const mergedUsers = [...fbUsers];
-          localUsers.forEach(lu => {
-            if (!mergedUsers.some(fu => fu.username.toLowerCase() === lu.username.toLowerCase())) {
-              mergedUsers.push(lu);
-            }
-          });
-          LOCAL_CACHE.users = mergedUsers;
-
-          const localManifestations = LOCAL_CACHE.manifestations || [];
-          const fbManifestations = data.manifestations || [];
-          const mergedManifestations = [...fbManifestations];
-          localManifestations.forEach(lm => {
-            if (!mergedManifestations.some(fm => fm.id === lm.id)) {
-              mergedManifestations.push(lm);
-            }
-          });
-          LOCAL_CACHE.manifestations = mergedManifestations;
-
-          const localPolls = LOCAL_CACHE.polls || [];
-          const fbPolls = data.polls || [];
-          const mergedPolls = [...fbPolls];
-          localPolls.forEach(lp => {
-            if (!mergedPolls.some(fp => fp.id === lp.id)) {
-              mergedPolls.push(lp);
-            }
-          });
-          LOCAL_CACHE.polls = mergedPolls;
+          // Mesclagem estruturada inicial
+          LOCAL_CACHE.users = mergeUsers(data.users || [], LOCAL_CACHE.users || []);
+          LOCAL_CACHE.manifestations = mergeManifestations(data.manifestations || [], LOCAL_CACHE.manifestations || []);
+          LOCAL_CACHE.polls = mergePolls(data.polls || [], LOCAL_CACHE.polls || []);
 
           const localPre = LOCAL_CACHE.pre_registered || [];
           const fbPre = data.pre_registered || [];
@@ -354,6 +492,9 @@ function initFirebase() {
           LOCAL_CACHE.logo = data.logo !== undefined ? data.logo : (LOCAL_CACHE.logo || null);
           LOCAL_CACHE.theme = data.theme || LOCAL_CACHE.theme || 'light';
           
+          // Auto-recuperação (Self-Healing) inicial
+          healUserDatabase();
+
           // Atualiza o Firebase com os dados mesclados locais
           dbRef.set({
             users: LOCAL_CACHE.users,
@@ -373,13 +514,16 @@ function initFirebase() {
           LOCAL_CACHE.audit_logs = data.audit_logs || [];
           LOCAL_CACHE.logo = data.logo !== undefined ? data.logo : null;
           LOCAL_CACHE.theme = data.theme || 'light';
+          
+          // Auto-recuperação subsequente
+          healUserDatabase();
         }
-
-        // Heal/Restore missing users from other collections
-        healUserDatabase();
 
         // Garante que os 3 administradores padrão de produção estejam sempre presentes
         migrateUserData();
+        
+        // Sincroniza sessão do usuário atual imediatamente
+        syncCurrentUserSession();
         
         // Atualiza o localStorage local como backup offline (debounced)
         syncCacheToLocalStorage();
@@ -587,17 +731,7 @@ let cadastroUserSearch = '';
 let cadastroPreSearch = '';
 
 // Sincroniza os dados da sessão atual com o banco de dados para refletir mudanças de cargos imediatamente
-if (currentUser) {
-  const usersList = DB.get('users', SEED_USERS);
-  const dbUser = usersList.find(u => u.username.toLowerCase() === currentUser.username.toLowerCase());
-  if (dbUser) {
-    if (dbUser.role !== currentUser.role || dbUser.name !== currentUser.name) {
-      currentUser.role = dbUser.role;
-      currentUser.name = dbUser.name;
-      localStorage.setItem('inovando_session', JSON.stringify(currentUser));
-    }
-  }
-}
+syncCurrentUserSession();
 
 // Elementos Globais
 document.documentElement.setAttribute('data-theme', theme);
@@ -4200,5 +4334,20 @@ window.addEventListener('DOMContentLoaded', () => {
         overlay.classList.remove('active');
       }
     });
+  });
+
+  window.addEventListener('online', () => {
+    console.log("Navegador Online. Conectando ao banco central...");
+    if (firebaseURL) {
+      initFirebase();
+    }
+  });
+
+  window.addEventListener('offline', () => {
+    console.log("Navegador Offline. Operando em modo local.");
+    firebaseEnabled = false;
+    firebaseConnState = 'offline';
+    showToast("Você está desconectado da internet. Operando no modo local.", "info");
+    renderApp();
   });
 });
