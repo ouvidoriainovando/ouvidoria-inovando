@@ -1,6 +1,16 @@
 // Ouvidoria Inovando - Lógica e Banco de Dados Mock (Local Storage)
 // Escola Inove - Redesenho Inspirado de Alta Fidelidade (Atualizado com Slogan no Login)
 
+// Função auxiliar de JSON.parse segura para evitar crashes no carregamento inicial
+function safeJsonParse(str, fallback) {
+  try {
+    return str ? JSON.parse(str) : fallback;
+  } catch (e) {
+    console.error("safeJsonParse error:", e);
+    return fallback;
+  }
+}
+
 // --- CONFIGURAÇÃO E DADOS DE SEED ---
 const SEED_USERS = [
   { username: 'paulo', name: 'Paulo de Melo', role: 'admin', password: 'Jes0us2team9a', tipo_usuario: 'administrador' },
@@ -78,11 +88,11 @@ let firebaseURL = localStorage.getItem('inovando_firebase_url') || '';
 
 // Cache local sincronizado
 const LOCAL_CACHE = {
-  users: JSON.parse(localStorage.getItem('inovando_users')) || SEED_USERS,
-  manifestations: JSON.parse(localStorage.getItem('inovando_manifestations')) || SEED_MANIFESTATIONS,
-  polls: JSON.parse(localStorage.getItem('inovando_polls')) || SEED_POLLS,
-  pre_registered: JSON.parse(localStorage.getItem('inovando_pre_registered')) || SEED_PRE_REGISTERED,
-  audit_logs: JSON.parse(localStorage.getItem('inovando_audit_logs')) || [],
+  users: safeJsonParse(localStorage.getItem('inovando_users'), SEED_USERS),
+  manifestations: safeJsonParse(localStorage.getItem('inovando_manifestations'), SEED_MANIFESTATIONS),
+  polls: safeJsonParse(localStorage.getItem('inovando_polls'), SEED_POLLS),
+  pre_registered: safeJsonParse(localStorage.getItem('inovando_pre_registered'), SEED_PRE_REGISTERED),
+  audit_logs: safeJsonParse(localStorage.getItem('inovando_audit_logs'), []),
   logo: localStorage.getItem('inovando_logo') || null,
   theme: localStorage.getItem('inovando_theme') || 'light'
 };
@@ -132,7 +142,7 @@ const DB = {
       return LOCAL_CACHE[key];
     }
     const val = localStorage.getItem('inovando_' + key);
-    return val ? JSON.parse(val) : fallback;
+    return val ? safeJsonParse(val, fallback) : fallback;
   },
   set: (key, val) => {
     LOCAL_CACHE[key] = val;
@@ -197,7 +207,8 @@ function mergeUsers(fbUsers, localUsers) {
   const fbList = Array.isArray(fbUsers) ? fbUsers : [];
 
   fbList.forEach(fu => {
-    const lu = localList.find(u => u.username.toLowerCase() === fu.username.toLowerCase());
+    if (!fu || !fu.username) return;
+    const lu = localList.find(u => u && u.username && u.username.toLowerCase() === fu.username.toLowerCase());
     if (lu) {
       const mergedUser = { ...lu, ...fu };
       if (fu.status === 'bloqueado' || lu.status === 'bloqueado') {
@@ -213,7 +224,8 @@ function mergeUsers(fbUsers, localUsers) {
   });
 
   localList.forEach(lu => {
-    if (!merged.some(mu => mu.username.toLowerCase() === lu.username.toLowerCase())) {
+    if (!lu || !lu.username) return;
+    if (!merged.some(mu => mu && mu.username && mu.username.toLowerCase() === lu.username.toLowerCase())) {
       merged.push(lu);
     }
   });
@@ -293,9 +305,9 @@ function mergePolls(fbPolls, localPolls) {
 }
 
 function syncCurrentUserSession() {
-  if (!currentUser) return;
+  if (!currentUser || !currentUser.username) return;
   const usersList = LOCAL_CACHE.users || DB.get('users', SEED_USERS);
-  const dbUser = usersList.find(u => u.username.toLowerCase() === currentUser.username.toLowerCase());
+  const dbUser = usersList.find(u => u && u.username && u.username.toLowerCase() === currentUser.username.toLowerCase());
   if (dbUser) {
     if (dbUser.status === 'bloqueado') {
       showToast('Sua conta foi bloqueada pela administração.', 'error');
@@ -356,7 +368,7 @@ function healUserDatabase() {
         return;
       }
       
-      if (!users.some(u => u.username.toLowerCase() === lowerUsername)) {
+      if (!users.some(u => u && u.username && u.username.toLowerCase() === lowerUsername)) {
         // Encontra ou define nome amigável
         let friendlyName = name ? name.trim() : normalizedUsername;
         if (friendlyName.toLowerCase() === 'anônimo' || friendlyName.toLowerCase() === 'anonimo' || friendlyName.toLowerCase() === 'anónimo') {
@@ -723,7 +735,7 @@ function migrateManifestationsComments() {
 migrateManifestationsComments();
 
 // --- VARIÁVEIS DE ESTADO DA SESSÃO ---
-let currentUser = JSON.parse(localStorage.getItem('inovando_session')) || null;
+let currentUser = safeJsonParse(localStorage.getItem('inovando_session'), null);
 let currentView = currentUser ? 'home' : 'login';
 let userToDelete = null;
 let theme = localStorage.getItem('inovando_theme') || 'light';
@@ -3436,9 +3448,9 @@ function importSiteBackup(event) {
   const reader = new FileReader();
   reader.onload = function (e) {
     try {
-      const backupData = JSON.parse(e.target.result);
+      const backupData = safeJsonParse(e.target.result, null);
       
-      if (!backupData.users || !backupData.manifestations || !backupData.polls) {
+      if (!backupData || !backupData.users || !backupData.manifestations || !backupData.polls) {
         showToast('Arquivo de backup inválido ou corrompido.', 'error');
         return;
       }
