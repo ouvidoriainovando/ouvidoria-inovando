@@ -2547,9 +2547,14 @@ function renderAdmin() {
                       <i data-lucide="user" style="width: 14px; height: 14px;"></i> Conta Atual
                     </span>
                   ` : `
-                    <button class="btn btn-secondary btn-danger" style="padding: 6px 12px; font-size: 12px; width: auto; display: inline-flex; align-items: center; gap: 4px;" onclick="openDeleteUserModal('${u.username}', '${u.name.replace(/'/g, "\\'")}')">
-                      <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i> Excluir
-                    </button>
+                    <div style="display: flex; gap: 6px;">
+                      <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px; width: auto; display: inline-flex; align-items: center; gap: 4px; border-color: var(--primary); color: var(--primary); background: transparent;" onclick="toggleUserRole('${u.username}')">
+                        <i data-lucide="${u.role === 'admin' ? 'user-minus' : 'user-plus'}" style="width: 14px; height: 14px;"></i> ${u.role === 'admin' ? 'Rebaixar' : 'Adm'}
+                      </button>
+                      <button class="btn btn-secondary btn-danger" style="padding: 6px 12px; font-size: 12px; width: auto; display: inline-flex; align-items: center; gap: 4px;" onclick="openDeleteUserModal('${u.username}', '${u.name.replace(/'/g, "\\'")}')">
+                        <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i> Excluir
+                      </button>
+                    </div>
                   `}
                 </td>
               </tr>
@@ -3177,7 +3182,7 @@ function renderUserRowsHtml(filteredUsers) {
   if (filteredUsers.length === 0) {
     return `
       <tr>
-        <td colspan="8" style="text-align: center; color: var(--text-secondary); padding: 30px;">Nenhum usuário cadastrado correspondente encontrado.</td>
+        <td colspan="10" style="text-align: center; color: var(--text-secondary); padding: 30px;">Nenhum usuário cadastrado correspondente encontrado.</td>
       </tr>
     `;
   }
@@ -3194,9 +3199,10 @@ function renderUserRowsHtml(filteredUsers) {
       <tr>
         <td style="font-weight: 700;">${u.username}</td>
         <td>${u.name}</td>
+        <td>${u.turma || 'N/A'}</td>
         <td>
           <span class="badge ${u.role === 'admin' ? 'reclamacao' : 'sugestao'}" style="font-size: 9px;">
-            ${u.turma || (u.role === 'admin' ? 'Administração' : 'Não Definido')}
+            ${u.role === 'admin' ? 'Administrador' : 'Aluno'}
           </span>
         </td>
         <td>${dateCadastro}</td>
@@ -3206,6 +3212,15 @@ function renderUserRowsHtml(filteredUsers) {
           <span class="badge ${isBlocked ? 'status-pending' : 'status-resolved'}" style="font-size: 9px;">
             ${isBlocked ? 'Bloqueada' : 'Ativa'}
           </span>
+        </td>
+        <td>
+          ${isSelf ? `
+            <span style="font-size: 11px; color: var(--text-secondary); font-style: italic;">N/A</span>
+          ` : `
+            <button class="btn btn-secondary" onclick="toggleUserRole('${u.username}')" style="padding: 6px 10px; font-size: 11px; width: auto; border-color: var(--primary); color: var(--primary); display: inline-flex; align-items: center; gap: 4px; background: transparent; height: 30px;">
+              <i data-lucide="${u.role === 'admin' ? 'user-minus' : 'user-plus'}"></i> ${u.role === 'admin' ? 'Rebaixar' : 'Adm'}
+            </button>
+          `}
         </td>
         <td>
           <div style="display: flex; gap: 6px;">
@@ -3331,10 +3346,12 @@ function renderCadastroManager() {
                 <th>Login / Matrícula</th>
                 <th>Nome Completo</th>
                 <th>Turma</th>
+                <th>Cargo</th>
                 <th>Criado em</th>
                 <th>Último Acesso</th>
                 <th>Qtd Votos</th>
                 <th>Status</th>
+                <th>Alterar Cargo</th>
                 <th>Ações</th>
               </tr>
             </thead>
@@ -3637,6 +3654,61 @@ function toggleUserBlockStatus(username) {
     }
   } catch (err) {
     console.error("toggleUserBlockStatus Error:", err);
+  }
+}
+
+function toggleUserRole(username) {
+  try {
+    const users = DB.get('users', SEED_USERS);
+    const userIdx = users.findIndex(u => u.username.toLowerCase() === username.toLowerCase());
+    if (userIdx === -1) {
+      showToast('Usuário não encontrado.', 'error');
+      return;
+    }
+
+    const user = users[userIdx];
+    const oldRole = user.role;
+    const newRole = oldRole === 'admin' ? 'aluno' : 'admin';
+
+    // Se estiver rebaixando um administrador, certifique-se de que há pelo menos mais um admin
+    if (oldRole === 'admin') {
+      const adminsCount = users.filter(u => u.role === 'admin').length;
+      if (adminsCount <= 1) {
+        showToast('Não é possível rebaixar o único administrador do sistema.', 'error');
+        return;
+      }
+    }
+
+    const roleNameOld = oldRole === 'admin' ? 'Administrador' : 'Aluno';
+    const roleNameNew = newRole === 'admin' ? 'Administrador' : 'Aluno';
+
+    if (!confirm(`Tem certeza que deseja alterar o cargo de ${user.name} de ${roleNameOld} para ${roleNameNew}?`)) {
+      return;
+    }
+
+    user.role = newRole;
+    
+    // Se o usuário promovido/rebaixado for o usuário da sessão atual, atualiza a sessão
+    if (currentUser && currentUser.username.toLowerCase() === username.toLowerCase()) {
+      currentUser.role = newRole;
+      localStorage.setItem('inovando_session', JSON.stringify(currentUser));
+    }
+
+    DB.set('users', users);
+    logAuditAction('Alterou cargo de usuário', `Usuário: ${user.name} (${user.username}) | Cargo antigo: ${roleNameOld} -> Novo: ${roleNameNew}`);
+    showToast(`Cargo de ${user.name} alterado para ${roleNameNew}!`);
+
+    // Recarrega a visualização atual
+    if (currentView === 'cadastro_manager') {
+      renderCadastroManager();
+    } else if (currentView === 'admin') {
+      renderAdmin();
+    } else {
+      renderApp();
+    }
+  } catch (err) {
+    console.error("toggleUserRole Error:", err);
+    showToast('Erro ao alterar cargo do usuário.', 'error');
   }
 }
 
