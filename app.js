@@ -26,6 +26,18 @@ const TURMAS_OPTIONS_HTML = `
 
 const SEED_POLLS = [];
 
+function safeCreateIcons() {
+  if (typeof lucide !== 'undefined' && lucide.createIcons) {
+    try {
+      lucide.createIcons();
+    } catch (e) {
+      console.error("Erro ao renderizar ícones com Lucide:", e);
+    }
+  } else {
+    console.warn("Lucide não está disponível.");
+  }
+}
+
 // --- LÓGICA DE CUSTOMIZAÇÃO DE LOGOTIPO (ADMIN) ---
 function getLogoHtml(className = 'header-logo-svg') {
   const customLogo = localStorage.getItem('inovando_custom_logo');
@@ -196,21 +208,89 @@ function initFirebase() {
     }, 2500);
     
     dbRef.on('value', (snapshot) => {
+      const isFirstLoad = !hasLoadedData;
       hasLoadedData = true;
       clearTimeout(connectionTimeout);
       firebaseEnabled = true;
       const data = snapshot.val();
       if (data) {
         console.log("Firebase Central DB: Dados recebidos e sincronizados com sucesso.");
-        // Se alguma lista for apagada no banco, o Firebase remove a chave correspondente.
-        // Nesses casos, devemos redefinir para um array vazio em vez de manter o cache antigo.
-        LOCAL_CACHE.users = data.users || [];
-        LOCAL_CACHE.manifestations = data.manifestations || [];
-        LOCAL_CACHE.polls = data.polls || [];
-        LOCAL_CACHE.pre_registered = data.pre_registered || [];
-        LOCAL_CACHE.audit_logs = data.audit_logs || [];
-        LOCAL_CACHE.logo = data.logo !== undefined ? data.logo : null;
-        LOCAL_CACHE.theme = data.theme || 'light';
+        
+        if (isFirstLoad) {
+          // Mesclagem segura inicial para preservar cadastros offline locais
+          const localUsers = LOCAL_CACHE.users || [];
+          const fbUsers = data.users || [];
+          const mergedUsers = [...fbUsers];
+          localUsers.forEach(lu => {
+            if (!mergedUsers.some(fu => fu.username.toLowerCase() === lu.username.toLowerCase())) {
+              mergedUsers.push(lu);
+            }
+          });
+          LOCAL_CACHE.users = mergedUsers;
+
+          const localManifestations = LOCAL_CACHE.manifestations || [];
+          const fbManifestations = data.manifestations || [];
+          const mergedManifestations = [...fbManifestations];
+          localManifestations.forEach(lm => {
+            if (!mergedManifestations.some(fm => fm.id === lm.id)) {
+              mergedManifestations.push(lm);
+            }
+          });
+          LOCAL_CACHE.manifestations = mergedManifestations;
+
+          const localPolls = LOCAL_CACHE.polls || [];
+          const fbPolls = data.polls || [];
+          const mergedPolls = [...fbPolls];
+          localPolls.forEach(lp => {
+            if (!mergedPolls.some(fp => fp.id === lp.id)) {
+              mergedPolls.push(lp);
+            }
+          });
+          LOCAL_CACHE.polls = mergedPolls;
+
+          const localPre = LOCAL_CACHE.pre_registered || [];
+          const fbPre = data.pre_registered || [];
+          const mergedPre = [...fbPre];
+          localPre.forEach(lp => {
+            if (!mergedPre.some(fp => fp.matricula === lp.matricula)) {
+              mergedPre.push(lp);
+            }
+          });
+          LOCAL_CACHE.pre_registered = mergedPre;
+
+          const localLogs = LOCAL_CACHE.audit_logs || [];
+          const fbLogs = data.audit_logs || [];
+          const mergedLogs = [...fbLogs];
+          localLogs.forEach(ll => {
+            if (!mergedLogs.some(fl => fl.id === ll.id)) {
+              mergedLogs.push(ll);
+            }
+          });
+          LOCAL_CACHE.audit_logs = mergedLogs;
+
+          LOCAL_CACHE.logo = data.logo !== undefined ? data.logo : (LOCAL_CACHE.logo || null);
+          LOCAL_CACHE.theme = data.theme || LOCAL_CACHE.theme || 'light';
+          
+          // Atualiza o Firebase com os dados mesclados locais
+          dbRef.set({
+            users: LOCAL_CACHE.users,
+            manifestations: LOCAL_CACHE.manifestations,
+            polls: LOCAL_CACHE.polls,
+            pre_registered: LOCAL_CACHE.pre_registered,
+            audit_logs: LOCAL_CACHE.audit_logs,
+            logo: LOCAL_CACHE.logo || null,
+            theme: LOCAL_CACHE.theme
+          });
+        } else {
+          // Carregamento subsequente: aceita a versão do banco central
+          LOCAL_CACHE.users = data.users || [];
+          LOCAL_CACHE.manifestations = data.manifestations || [];
+          LOCAL_CACHE.polls = data.polls || [];
+          LOCAL_CACHE.pre_registered = data.pre_registered || [];
+          LOCAL_CACHE.audit_logs = data.audit_logs || [];
+          LOCAL_CACHE.logo = data.logo !== undefined ? data.logo : null;
+          LOCAL_CACHE.theme = data.theme || 'light';
+        }
 
         // Garante que os 3 administradores padrão de produção estejam sempre presentes
         migrateUserData();
@@ -448,7 +528,7 @@ function showToast(message, type = 'success') {
   `;
 
   container.appendChild(toast);
-  lucide.createIcons();
+  safeCreateIcons();
 
   // Remove após 3 segundos
   setTimeout(() => {
@@ -880,9 +960,7 @@ function adjustManifestationFormFields(selectedCategory = null, subvalue = '') {
       `;
     }
 
-    if (typeof lucide !== 'undefined' && lucide.createIcons) {
-      lucide.createIcons();
-    }
+    safeCreateIcons();
   } catch (err) {
     console.error("adjustManifestationFormFields Error:", err);
   }
@@ -1155,9 +1233,7 @@ function confirmClosePollModal(onConfirm) {
     </div>
   `;
   document.body.appendChild(confirmModal);
-  if (typeof lucide !== 'undefined' && lucide.createIcons) {
-    lucide.createIcons();
-  }
+  safeCreateIcons();
 
   const cleanup = () => {
     confirmModal.classList.remove('active');
@@ -1213,9 +1289,7 @@ function addPollOptionRow(text = '', id = '') {
       </button>
     `;
     container.appendChild(row);
-    if (typeof lucide !== 'undefined' && lucide.createIcons) {
-      lucide.createIcons();
-    }
+    safeCreateIcons();
   } catch (err) {
     console.error("addPollOptionRow Error:", err);
   }
@@ -1393,7 +1467,7 @@ function openDeleteUserModal(username, name) {
   if (modal) {
     modal.classList.add('active');
   }
-  lucide.createIcons();
+  safeCreateIcons();
 }
 
 function closeDeleteUserModal() {
@@ -1578,7 +1652,7 @@ function renderAppDirect() {
         </div>
       </div>
     `;
-    lucide.createIcons();
+    safeCreateIcons();
     return;
   }
 
@@ -1741,7 +1815,7 @@ function renderAppDirect() {
       renderHome();
   }
 
-  lucide.createIcons();
+  safeCreateIcons();
 }
 
 function renderHome() {
@@ -1901,7 +1975,7 @@ function renderHome() {
       </button>
     </div>
   `;
-  lucide.createIcons();
+  safeCreateIcons();
 }
 
 function renderSugestao() {
@@ -1972,7 +2046,7 @@ function renderSugestao() {
     const classEl = document.getElementById('sugestao-class');
     if (classEl) classEl.value = currentUser.turma;
   }
-  lucide.createIcons();
+  safeCreateIcons();
 }
 
 function renderReclamacao() {
@@ -2048,7 +2122,7 @@ function renderReclamacao() {
     const classEl = document.getElementById('reclamacao-class');
     if (classEl) classEl.value = currentUser.turma;
   }
-  lucide.createIcons();
+  safeCreateIcons();
 }
 
 function adjustElogioRecipientField() {
@@ -2119,9 +2193,7 @@ function adjustElogioRecipientField() {
     `;
   }
   
-  if (typeof lucide !== 'undefined' && lucide.createIcons) {
-    lucide.createIcons();
-  }
+  safeCreateIcons();
 }
 
 function renderElogio() {
@@ -2195,7 +2267,7 @@ function renderElogio() {
     const classEl = document.getElementById('elogio-class');
     if (classEl) classEl.value = currentUser.turma;
   }
-  lucide.createIcons();
+  safeCreateIcons();
 }
 
 function renderManifestationsListHtml(filteredItems, isAdmin) {
@@ -2353,9 +2425,7 @@ function renderOuvidoria() {
   const listContainer = document.getElementById('manifestations-list-container');
   if (listContainer) {
     listContainer.innerHTML = renderManifestationsListHtml(filteredItems, isAdmin);
-    if (typeof lucide !== 'undefined' && lucide.createIcons) {
-      lucide.createIcons();
-    }
+    safeCreateIcons();
     return;
   }
 
@@ -2413,7 +2483,7 @@ function renderOuvidoria() {
       ${renderManifestationsListHtml(filteredItems, isAdmin)}
     </div>
   `;
-  lucide.createIcons();
+  safeCreateIcons();
 }
 
 function renderEnquetes() {
@@ -2523,7 +2593,7 @@ function renderEnquetes() {
       }).join('')}
     </div>
   `;
-  lucide.createIcons();
+  safeCreateIcons();
 }
 
 function renderAdmin() {
@@ -2697,7 +2767,7 @@ function renderAdmin() {
     drawBarChart(polls);
   }, 100);
 
-  lucide.createIcons();
+  safeCreateIcons();
 }
 
 function drawDonutChart(sug, rec, elo) {
@@ -2953,7 +3023,7 @@ function renderSettings() {
 
     </div>
   `;
-  lucide.createIcons();
+  safeCreateIcons();
 }
 
 function getFirebaseSettingsCardHtml() {
@@ -3272,7 +3342,7 @@ function renderCadastro() {
       </div>
     </div>
   `;
-  lucide.createIcons();
+  safeCreateIcons();
 }
 
 function adjustCadastroFields() {
@@ -3441,9 +3511,7 @@ function renderCadastroManager() {
   const tbody = document.getElementById('cadastro-manager-users-table-tbody');
   if (tbody) {
     tbody.innerHTML = renderUserRowsHtml(filteredUsers);
-    if (typeof lucide !== 'undefined' && lucide.createIcons) {
-      lucide.createIcons();
-    }
+    safeCreateIcons();
     return;
   }
 
@@ -3584,7 +3652,7 @@ function renderCadastroManager() {
     }
   }
 
-  lucide.createIcons();
+  safeCreateIcons();
 }
 
 function getUserVotesCount(username) {
@@ -3657,7 +3725,7 @@ function openPreRegisterModal() {
     </div>
   `;
   document.body.appendChild(modalDiv);
-  lucide.createIcons();
+  safeCreateIcons();
 }
 
 function closePreRegisterModal() {
@@ -3737,7 +3805,7 @@ function openBulkPreRegisterModal() {
     </div>
   `;
   document.body.appendChild(modalDiv);
-  lucide.createIcons();
+  safeCreateIcons();
 }
 
 function closeBulkPreRegisterModal() {
@@ -3935,7 +4003,7 @@ function openResetPasswordModal(username, name) {
     </div>
   `;
   document.body.appendChild(modalDiv);
-  lucide.createIcons();
+  safeCreateIcons();
 }
 
 function closeResetPasswordModal() {
