@@ -302,18 +302,6 @@ function migrateUserData() {
       if (existingIdx === -1) {
         users.push(admin);
         modified = true;
-      } else {
-        const existing = users[existingIdx];
-        let targetPasswordHash = admin.password;
-        if (typeof sha256 !== 'undefined' && targetPasswordHash.length < 64) {
-          targetPasswordHash = sha256(targetPasswordHash);
-        }
-        if (existing.role !== admin.role || existing.status !== admin.status || existing.password !== targetPasswordHash) {
-          existing.role = admin.role;
-          existing.status = admin.status;
-          existing.password = targetPasswordHash;
-          modified = true;
-        }
       }
     });
 
