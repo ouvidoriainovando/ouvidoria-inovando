@@ -72,8 +72,9 @@ function restoreDefaultLogo() {
 
 // --- GERENCIAMENTO DE ESTADO E SINCRONIZAÇÃO CENTRAL (FIREBASE) ---
 let firebaseEnabled = false;
+let firebaseConnState = localStorage.getItem('inovando_firebase_url') ? 'connecting' : 'offline';
 let dbRef = null;
-let firebaseURL = localStorage.getItem('inovando_firebase_url') || 'https://ouvidoria-inovando-default-rtdb.firebaseio.com';
+let firebaseURL = localStorage.getItem('inovando_firebase_url') || '';
 
 // Cache local sincronizado
 const LOCAL_CACHE = {
@@ -175,6 +176,7 @@ const DB = {
 function initFirebase() {
   if (!firebaseURL) {
     firebaseEnabled = false;
+    firebaseConnState = 'offline';
     console.log("Firebase Central DB: URL não configurada. Usando armazenamento local.");
     return;
   }
@@ -182,6 +184,7 @@ function initFirebase() {
   try {
     if (typeof firebase === 'undefined') {
       firebaseEnabled = false;
+      firebaseConnState = 'error';
       console.warn("Firebase Central DB: SDK do Firebase não carregado.");
       return;
     }
@@ -195,23 +198,16 @@ function initFirebase() {
     });
     
     dbRef = firebase.database().ref();
-    firebaseEnabled = true;
-    console.log("Firebase Central DB: Inicializado em " + firebaseURL);
+    firebaseConnState = 'connecting';
+    console.log("Firebase Central DB: Conectando a " + firebaseURL);
     
     let hasLoadedData = false;
-    const connectionTimeout = setTimeout(() => {
-      if (!hasLoadedData) {
-        console.warn("Firebase Central DB: Limite de tempo de conexão atingido. Operando em modo local temporariamente.");
-        firebaseEnabled = false;
-        renderApp();
-      }
-    }, 2500);
     
     dbRef.on('value', (snapshot) => {
       const isFirstLoad = !hasLoadedData;
       hasLoadedData = true;
-      clearTimeout(connectionTimeout);
       firebaseEnabled = true;
+      firebaseConnState = 'connected';
       const data = snapshot.val();
       if (data) {
         console.log("Firebase Central DB: Dados recebidos e sincronizados com sucesso.");
@@ -314,9 +310,9 @@ function initFirebase() {
       }
     }, (error) => {
       hasLoadedData = true;
-      clearTimeout(connectionTimeout);
       console.error("Firebase Central DB: Erro de leitura:", error);
       firebaseEnabled = false;
+      firebaseConnState = 'error';
       showToast("Falha na sincronização do banco. Operando no modo local.", "error");
       renderApp();
     });
@@ -324,6 +320,7 @@ function initFirebase() {
   } catch (err) {
     console.error("Firebase Central DB: Falha ao inicializar:", err);
     firebaseEnabled = false;
+    firebaseConnState = 'error';
     renderApp();
   }
 }
@@ -3038,9 +3035,24 @@ function getFirebaseSettingsCardHtml() {
       
       <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 20px; font-size: 14px;">
         <strong>Status da Conexão:</strong>
-        <span style="display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: ${firebaseEnabled ? 'var(--elogio)' : 'var(--reclamacao)'}">
-          <span style="width: 10px; height: 10px; border-radius: 50%; background-color: ${firebaseEnabled ? 'var(--elogio)' : 'var(--reclamacao)'}; display: inline-block;"></span>
-          ${firebaseEnabled ? 'Conectado (Centralizado)' : 'Modo Offline (Local)'}
+        <span style="display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: ${
+          firebaseConnState === 'connected' ? 'var(--elogio)' : 
+          firebaseConnState === 'connecting' ? '#d69e2e' : 
+          firebaseConnState === 'error' ? 'var(--reclamacao)' : 
+          'var(--text-secondary)'
+        }">
+          <span style="width: 10px; height: 10px; border-radius: 50%; background-color: ${
+            firebaseConnState === 'connected' ? 'var(--elogio)' : 
+            firebaseConnState === 'connecting' ? '#d69e2e' : 
+            firebaseConnState === 'error' ? 'var(--reclamacao)' : 
+            'var(--text-secondary)'
+          }; display: inline-block;"></span>
+          ${
+            firebaseConnState === 'connected' ? 'Conectado (Centralizado)' : 
+            firebaseConnState === 'connecting' ? 'Conectando...' : 
+            firebaseConnState === 'error' ? 'Erro na Conexão' : 
+            'Modo Offline (Local)'
+          }
         </span>
       </div>
 
@@ -3063,7 +3075,7 @@ function getFirebaseSettingsCardHtml() {
         </button>
       ` : ''}
 
-      ${!firebaseEnabled && firebaseURL ? `
+      ${firebaseConnState === 'error' && firebaseURL ? `
         <div style="margin-top: 15px; padding: 10px 15px; background: rgba(229, 62, 62, 0.1); border-left: 4px solid var(--reclamacao); border-radius: 4px; font-size: 12px; color: var(--text-main); line-height: 1.4;">
           Não foi possível conectar ao Firebase. Verifique se a URL está correta e se a base de dados possui regras de leitura/escrita públicas no Firebase Console (Modo de Teste).
         </div>
@@ -3098,8 +3110,10 @@ function saveFirebaseConfig(e) {
     localStorage.setItem('inovando_firebase_url', url);
     firebaseURL = url;
     
-    showToast("Salvando configurações e conectando...", "info");
-    initFirebase();
+    showToast("Configurações salvas. Conectando...", "success");
+    setTimeout(() => {
+      location.reload();
+    }, 1500);
   } catch (err) {
     console.error("saveFirebaseConfig Error:", err);
     showToast("Erro ao salvar configuração.", "error");
@@ -3117,21 +3131,10 @@ function disconnectFirebase() {
     firebaseEnabled = false;
     dbRef = null;
     
-    if (firebase.apps.length > 0) {
-      firebase.app().delete();
-    }
-    
-    showToast("Desconectado com sucesso. Usando modo offline local.", "success");
-    
-    // Restore local cache from localStorage
-    LOCAL_CACHE.users = JSON.parse(localStorage.getItem('inovando_users')) || SEED_USERS;
-    LOCAL_CACHE.manifestations = JSON.parse(localStorage.getItem('inovando_manifestations')) || SEED_MANIFESTATIONS;
-    LOCAL_CACHE.polls = JSON.parse(localStorage.getItem('inovando_polls')) || SEED_POLLS;
-    LOCAL_CACHE.pre_registered = JSON.parse(localStorage.getItem('inovando_pre_registered')) || SEED_PRE_REGISTERED;
-    LOCAL_CACHE.logo = localStorage.getItem('inovando_logo') || null;
-    LOCAL_CACHE.theme = localStorage.getItem('inovando_theme') || 'light';
-    
-    renderApp();
+    showToast("Desconectado com sucesso. Recarregando...", "success");
+    setTimeout(() => {
+      location.reload();
+    }, 1500);
   } catch (err) {
     console.error("disconnectFirebase Error:", err);
   }
