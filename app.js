@@ -86,6 +86,19 @@ let firebaseConnState = localStorage.getItem('inovando_firebase_url') ? 'connect
 let dbRef = null;
 let firebaseURL = localStorage.getItem('inovando_firebase_url') || '';
 
+// --- VARIÁVEIS DE ESTADO DA APLICAÇÃO E SESSÃO (Declaradas no topo para evitar erros de TDZ) ---
+let currentUser = safeJsonParse(localStorage.getItem('inovando_session'), null);
+let currentView = currentUser ? 'home' : 'login';
+let userToDelete = null;
+let theme = localStorage.getItem('inovando_theme') || 'light';
+let cadastroUserSearch = '';
+let cadastroPreSearch = '';
+let currentCategoryFilter = 'all';
+let currentStatusFilter = 'all';
+let searchQuery = '';
+let openCommentSections = [];
+let renderAppTimeout = null;
+
 // Cache local sincronizado
 const LOCAL_CACHE = {
   users: safeJsonParse(localStorage.getItem('inovando_users'), SEED_USERS),
@@ -467,47 +480,84 @@ function initFirebase() {
     let hasLoadedData = false;
     
     dbRef.on('value', (snapshot) => {
-      const isFirstLoad = !hasLoadedData;
-      hasLoadedData = true;
-      firebaseEnabled = true;
-      firebaseConnState = 'connected';
-      const data = snapshot.val();
-      if (data) {
-        console.log("Firebase Central DB: Dados recebidos e sincronizados com sucesso.");
-        
-        if (isFirstLoad) {
-          // Mesclagem estruturada inicial
-          LOCAL_CACHE.users = mergeUsers(data.users || [], LOCAL_CACHE.users || []);
-          LOCAL_CACHE.manifestations = mergeManifestations(data.manifestations || [], LOCAL_CACHE.manifestations || []);
-          LOCAL_CACHE.polls = mergePolls(data.polls || [], LOCAL_CACHE.polls || []);
-
-          const localPre = LOCAL_CACHE.pre_registered || [];
-          const fbPre = data.pre_registered || [];
-          const mergedPre = [...fbPre];
-          localPre.forEach(lp => {
-            if (!mergedPre.some(fp => fp.matricula === lp.matricula)) {
-              mergedPre.push(lp);
-            }
-          });
-          LOCAL_CACHE.pre_registered = mergedPre;
-
-          const localLogs = LOCAL_CACHE.audit_logs || [];
-          const fbLogs = data.audit_logs || [];
-          const mergedLogs = [...fbLogs];
-          localLogs.forEach(ll => {
-            if (!mergedLogs.some(fl => fl.id === ll.id)) {
-              mergedLogs.push(ll);
-            }
-          });
-          LOCAL_CACHE.audit_logs = mergedLogs;
-
-          LOCAL_CACHE.logo = data.logo !== undefined ? data.logo : (LOCAL_CACHE.logo || null);
-          LOCAL_CACHE.theme = data.theme || LOCAL_CACHE.theme || 'light';
+      try {
+        const isFirstLoad = !hasLoadedData;
+        hasLoadedData = true;
+        firebaseEnabled = true;
+        firebaseConnState = 'connected';
+        const data = snapshot.val();
+        if (data) {
+          console.log("Firebase Central DB: Dados recebidos e sincronizados com sucesso.");
           
-          // Auto-recuperação (Self-Healing) inicial
-          healUserDatabase();
+          if (isFirstLoad) {
+            // Mesclagem estruturada inicial
+            LOCAL_CACHE.users = mergeUsers(data.users || [], LOCAL_CACHE.users || []);
+            LOCAL_CACHE.manifestations = mergeManifestations(data.manifestations || [], LOCAL_CACHE.manifestations || []);
+            LOCAL_CACHE.polls = mergePolls(data.polls || [], LOCAL_CACHE.polls || []);
 
-          // Atualiza o Firebase com os dados mesclados locais
+            const localPre = LOCAL_CACHE.pre_registered || [];
+            const fbPre = data.pre_registered || [];
+            const mergedPre = [...fbPre];
+            localPre.forEach(lp => {
+              if (!mergedPre.some(fp => fp.matricula === lp.matricula)) {
+                mergedPre.push(lp);
+              }
+            });
+            LOCAL_CACHE.pre_registered = mergedPre;
+
+            const localLogs = LOCAL_CACHE.audit_logs || [];
+            const fbLogs = data.audit_logs || [];
+            const mergedLogs = [...fbLogs];
+            localLogs.forEach(ll => {
+              if (!mergedLogs.some(fl => fl.id === ll.id)) {
+                mergedLogs.push(ll);
+              }
+            });
+            LOCAL_CACHE.audit_logs = mergedLogs;
+
+            LOCAL_CACHE.logo = data.logo !== undefined ? data.logo : (LOCAL_CACHE.logo || null);
+            LOCAL_CACHE.theme = data.theme || LOCAL_CACHE.theme || 'light';
+            
+            // Auto-recuperação (Self-Healing) inicial
+            healUserDatabase();
+
+            // Atualiza o Firebase com os dados mesclados locais
+            dbRef.set({
+              users: LOCAL_CACHE.users,
+              manifestations: LOCAL_CACHE.manifestations,
+              polls: LOCAL_CACHE.polls,
+              pre_registered: LOCAL_CACHE.pre_registered,
+              audit_logs: LOCAL_CACHE.audit_logs,
+              logo: LOCAL_CACHE.logo || null,
+              theme: LOCAL_CACHE.theme
+            });
+          } else {
+            // Carregamento subsequente: aceita a versão do banco central
+            LOCAL_CACHE.users = data.users || [];
+            LOCAL_CACHE.manifestations = data.manifestations || [];
+            LOCAL_CACHE.polls = data.polls || [];
+            LOCAL_CACHE.pre_registered = data.pre_registered || [];
+            LOCAL_CACHE.audit_logs = data.audit_logs || [];
+            LOCAL_CACHE.logo = data.logo !== undefined ? data.logo : null;
+            LOCAL_CACHE.theme = data.theme || 'light';
+            
+            // Auto-recuperação subsequente
+            healUserDatabase();
+          }
+
+          // Garante que os 3 administradores padrão de produção estejam sempre presentes
+          migrateUserData();
+          
+          // Sincroniza sessão do usuário atual imediatamente
+          syncCurrentUserSession();
+          
+          // Atualiza o localStorage local como backup offline (debounced)
+          syncCacheToLocalStorage();
+          
+          renderApp();
+        } else {
+          // Database vazio, inicializa com os dados locais atuais
+          console.log("Firebase Central DB: Banco vazio. Enviando dados locais atuais...");
           dbRef.set({
             users: LOCAL_CACHE.users,
             manifestations: LOCAL_CACHE.manifestations,
@@ -517,42 +567,11 @@ function initFirebase() {
             logo: LOCAL_CACHE.logo || null,
             theme: LOCAL_CACHE.theme
           });
-        } else {
-          // Carregamento subsequente: aceita a versão do banco central
-          LOCAL_CACHE.users = data.users || [];
-          LOCAL_CACHE.manifestations = data.manifestations || [];
-          LOCAL_CACHE.polls = data.polls || [];
-          LOCAL_CACHE.pre_registered = data.pre_registered || [];
-          LOCAL_CACHE.audit_logs = data.audit_logs || [];
-          LOCAL_CACHE.logo = data.logo !== undefined ? data.logo : null;
-          LOCAL_CACHE.theme = data.theme || 'light';
-          
-          // Auto-recuperação subsequente
-          healUserDatabase();
         }
-
-        // Garante que os 3 administradores padrão de produção estejam sempre presentes
-        migrateUserData();
-        
-        // Sincroniza sessão do usuário atual imediatamente
-        syncCurrentUserSession();
-        
-        // Atualiza o localStorage local como backup offline (debounced)
-        syncCacheToLocalStorage();
-        
+      } catch (err) {
+        console.error("Erro processando atualização do Firebase:", err);
+        // Mesmo em caso de falha no processamento dos dados remotos, renderiza a aplicação
         renderApp();
-      } else {
-        // Database vazio, inicializa com os dados locais atuais
-        console.log("Firebase Central DB: Banco vazio. Enviando dados locais atuais...");
-        dbRef.set({
-          users: LOCAL_CACHE.users,
-          manifestations: LOCAL_CACHE.manifestations,
-          polls: LOCAL_CACHE.polls,
-          pre_registered: LOCAL_CACHE.pre_registered,
-          audit_logs: LOCAL_CACHE.audit_logs,
-          logo: LOCAL_CACHE.logo || null,
-          theme: LOCAL_CACHE.theme
-        });
       }
     }, (error) => {
       hasLoadedData = true;
@@ -735,12 +754,7 @@ function migrateManifestationsComments() {
 migrateManifestationsComments();
 
 // --- VARIÁVEIS DE ESTADO DA SESSÃO ---
-let currentUser = safeJsonParse(localStorage.getItem('inovando_session'), null);
-let currentView = currentUser ? 'home' : 'login';
-let userToDelete = null;
-let theme = localStorage.getItem('inovando_theme') || 'light';
-let cadastroUserSearch = '';
-let cadastroPreSearch = '';
+// (Inicializadas no topo do arquivo para evitar erros de inicialização)
 
 // Sincroniza os dados da sessão atual com o banco de dados para refletir mudanças de cargos imediatamente
 syncCurrentUserSession();
@@ -874,9 +888,6 @@ function handleLogout() {
 }
 
 // --- LÓGICA DE OUVIDORIA (MANIFESTAÇÕES) ---
-let currentCategoryFilter = 'all';
-let currentStatusFilter = 'all';
-let searchQuery = '';
 
 function submitSugestao(e) {
   e.preventDefault();
@@ -975,7 +986,7 @@ function updateManifestationStatus(id, newStatus) {
   }
 }
 
-let openCommentSections = [];
+
 
 function toggleCommentsSection(manifestationId) {
   const index = openCommentSections.indexOf(manifestationId);
@@ -1808,14 +1819,82 @@ function removeProfilePic(event) {
 
 // --- RENDERIZADORES DE VIEW ---
 
-let renderAppTimeout = null;
 function renderApp() {
-  if (renderAppTimeout) {
-    clearTimeout(renderAppTimeout);
+  try {
+    if (renderAppTimeout) {
+      clearTimeout(renderAppTimeout);
+    }
+    renderAppTimeout = setTimeout(() => {
+      try {
+        renderAppDirect();
+      } catch (err) {
+        console.error("Erro fatal ao renderizar a aplicação (renderAppDirect):", err);
+        showCriticalErrorScreen(err);
+      }
+    }, 30);
+  } catch (err) {
+    console.error("Erro ao agendar renderApp:", err);
   }
-  renderAppTimeout = setTimeout(() => {
-    renderAppDirect();
-  }, 30);
+}
+
+function showCriticalErrorScreen(err) {
+  const rootEl = document.getElementById('root');
+  if (!rootEl) return;
+  rootEl.innerHTML = `
+    <div style="
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background: var(--bg-primary, #ffffff);
+      color: var(--text-primary, #1e293b);
+      font-family: 'Outfit', sans-serif;
+      padding: 20px;
+      text-align: center;
+    ">
+      <div style="
+        background: var(--bg-card, #f8fafc);
+        border: 1px solid var(--border-color, #e2e8f0);
+        padding: 40px;
+        border-radius: 16px;
+        max-width: 500px;
+        width: 100%;
+        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+      ">
+        <div style="font-size: 48px; margin-bottom: 20px;">⚠️</div>
+        <h2 style="font-size: 24px; margin-bottom: 10px; font-weight: 700; color: #ef4444;">Ops! Algo deu errado</h2>
+        <p style="font-size: 16px; color: var(--text-secondary, #64748b); margin-bottom: 20px;">
+          Ocorreu um erro inesperado ao renderizar a interface. Tentamos recuperar, mas se o problema persistir, por favor recarregue a página ou limpe o cache.
+        </p>
+        <pre style="
+          text-align: left;
+          background: #0f172a;
+          color: #38bdf8;
+          padding: 16px;
+          border-radius: 8px;
+          font-size: 12px;
+          overflow-x: auto;
+          margin-bottom: 24px;
+          white-space: pre-wrap;
+          word-break: break-all;
+        ">${err ? err.message || err : 'Erro desconhecido'}</pre>
+        <button onclick="location.reload()" style="
+          background: #2563eb;
+          color: #ffffff;
+          border: none;
+          padding: 12px 24px;
+          border-radius: 8px;
+          font-size: 16px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: background 0.2s;
+        " onmouseover="this.style.background='#1d4ed8'" onmouseout="this.style.background='#2563eb'">
+          Recarregar Página
+        </button>
+      </div>
+    </div>
+  `;
 }
 
 function renderAppDirect() {
@@ -4332,6 +4411,26 @@ function deactivateAllUnusedCodes() {
 }
 
 // --- CONFIGURAÇÃO INICIAL ---
+
+// Tratamento Global de Exceções
+window.onerror = function(message, source, lineno, colno, error) {
+  console.error("Erro global capturado:", message, "em", source, ":", lineno);
+  
+  const rootEl = document.getElementById('root');
+  if (rootEl && (!rootEl.innerHTML || rootEl.innerHTML.trim() === "" || rootEl.innerHTML.trim() === "loading" || (!rootEl.innerHTML.includes("login-container") && !rootEl.innerHTML.includes("app-layout")))) {
+    try {
+      showCriticalErrorScreen(error || message);
+    } catch (e) {
+      console.error("Falha ao renderizar tela de erro crítica:", e);
+    }
+  }
+  return false;
+};
+
+window.addEventListener('unhandledrejection', function(event) {
+  console.error("Rejeição de Promise não tratada capturada:", event.reason);
+});
+
 window.addEventListener('DOMContentLoaded', () => {
   renderApp();
   
