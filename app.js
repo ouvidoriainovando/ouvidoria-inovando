@@ -172,6 +172,93 @@ const DB = {
   }
 };
 
+function healUserDatabase() {
+  try {
+    const users = LOCAL_CACHE.users || [];
+    const manifestations = LOCAL_CACHE.manifestations || [];
+    const polls = LOCAL_CACHE.polls || [];
+    const logs = LOCAL_CACHE.audit_logs || [];
+    let modified = false;
+
+    // Helper to add a user if missing
+    function addMissingUser(username, name, role, type, turma) {
+      if (!username) return;
+      const normalizedUsername = username.trim();
+      if (!normalizedUsername) return;
+      const lowerUsername = normalizedUsername.toLowerCase();
+      
+      // Ignore placeholder/special values
+      if (lowerUsername === 'anônimo' || lowerUsername === 'anonimo' || lowerUsername === 'admin' || lowerUsername === 'anónimo') {
+        return;
+      }
+      
+      if (!users.some(u => u.username.toLowerCase() === lowerUsername)) {
+        // Encontra ou define nome amigável
+        let friendlyName = name ? name.trim() : normalizedUsername;
+        if (friendlyName.toLowerCase() === 'anônimo' || friendlyName.toLowerCase() === 'anonimo' || friendlyName.toLowerCase() === 'anónimo') {
+          friendlyName = normalizedUsername;
+        }
+
+        users.push({
+          username: normalizedUsername,
+          name: friendlyName,
+          role: role || 'aluno',
+          tipo_usuario: type || 'aluno',
+          password: 'Jes0us2team9a', // senha padrão restaurada (será criptografada automaticamente em sha256 pelo migrateUserData)
+          turma: turma || (type === 'aluno' ? '' : 'Não sou aluno'),
+          status: 'ativo',
+          created_at: new Date().toISOString()
+        });
+        modified = true;
+        console.log(`Database Healing: Restaurado usuário ausente "${normalizedUsername}" (${friendlyName})`);
+      }
+    }
+
+    // 1. Extrair de manifestations (autor do post principal)
+    manifestations.forEach(m => {
+      if (m.authorUsername) {
+        const isNotStudent = m.turma === 'Não sou aluno';
+        const type = isNotStudent ? 'funcionario' : 'aluno';
+        addMissingUser(m.authorUsername, m.author, 'aluno', type, m.turma);
+      }
+      // Extrair de comments (comentários)
+      if (m.comments) {
+        m.comments.forEach(c => {
+          if (c.authorUsername) {
+            addMissingUser(c.authorUsername, c.author, 'aluno', 'aluno', '');
+          }
+        });
+      }
+    });
+
+    // 2. Extrair de polls (votos em enquetes)
+    polls.forEach(p => {
+      if (p.votedUsers) {
+        Object.keys(p.votedUsers).forEach(username => {
+          if (username) {
+            addMissingUser(username, username, 'aluno', 'aluno', '');
+          }
+        });
+      }
+    });
+
+    // 3. Extrair de audit logs (usuários administradores que executaram ações)
+    logs.forEach(l => {
+      if (l.adminUsername) {
+        addMissingUser(l.adminUsername, l.adminName || l.adminUsername, 'admin', 'administrador', 'Não sou aluno');
+      }
+    });
+
+    if (modified) {
+      LOCAL_CACHE.users = users;
+      syncCacheToLocalStorage();
+      saveToFirebase('users', users);
+    }
+  } catch (err) {
+    console.error("Database Healing Error:", err);
+  }
+}
+
 // Funções de Inicialização e Sincronização
 function initFirebase() {
   if (!firebaseURL) {
@@ -287,6 +374,9 @@ function initFirebase() {
           LOCAL_CACHE.logo = data.logo !== undefined ? data.logo : null;
           LOCAL_CACHE.theme = data.theme || 'light';
         }
+
+        // Heal/Restore missing users from other collections
+        healUserDatabase();
 
         // Garante que os 3 administradores padrão de produção estejam sempre presentes
         migrateUserData();
@@ -3492,6 +3582,9 @@ function renderUserRowsHtml(filteredUsers) {
 function renderCadastroManager() {
   const container = document.getElementById('main-content-area');
   if (!container) return;
+
+  // Heal/Restore missing users from other collections
+  healUserDatabase();
 
   const users = DB.get('users', SEED_USERS);
   const logs = DB.get('audit_logs', []);
