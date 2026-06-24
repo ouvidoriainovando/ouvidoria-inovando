@@ -358,6 +358,9 @@ function syncCurrentUserSession() {
       }
       renderApp();
     }
+  } else {
+    showToast('Sua conta foi removida pela administração.', 'error');
+    handleLogout();
   }
 }
 
@@ -1758,9 +1761,45 @@ function confirmDeleteUser() {
   if (users.length === filtered.length) {
     showToast('Usuário não encontrado.', 'error');
   } else {
+    // 1. Remover cadastro do usuário
     DB.set('users', filtered);
-    logAuditAction('Excluiu usuário', `Usuário: ${name} (${userToDelete})`);
-    showToast('Usuário removido com sucesso!');
+
+    // 2. Remover todos os votos vinculados a esse usuário e recalcular
+    try {
+      const polls = DB.get('polls', SEED_POLLS);
+      polls.forEach(poll => {
+        if (poll.votedUsers && poll.votedUsers[userToDelete] !== undefined) {
+          delete poll.votedUsers[userToDelete];
+          recalculatePollVotes(poll);
+        }
+      });
+      DB.set('polls', polls);
+    } catch (err) {
+      console.error("Erro ao remover votos do usuário excluído:", err);
+    }
+
+    // 3. Remover todas as manifestações (sugestões, elogios, reclamações) e comentários/likes do usuário
+    try {
+      const manifestations = DB.get('manifestations', SEED_MANIFESTATIONS);
+      const filteredManifestations = manifestations.filter(m => m.authorUsername !== userToDelete);
+      
+      filteredManifestations.forEach(m => {
+        if (m.comments) {
+          m.comments = m.comments.filter(c => c.authorUsername !== userToDelete);
+          m.comments.forEach(c => {
+            if (c.likedBy) {
+              c.likedBy = c.likedBy.filter(username => username !== userToDelete);
+            }
+          });
+        }
+      });
+      DB.set('manifestations', filteredManifestations);
+    } catch (err) {
+      console.error("Erro ao remover manifestações e comentários do usuário excluído:", err);
+    }
+
+    logAuditAction('Excluiu usuário e dados associados em cascata', `Usuário: ${name} (${userToDelete})`);
+    showToast('Usuário e todos os seus dados foram removidos permanentemente!');
   }
 
   closeDeleteUserModal();
