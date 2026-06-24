@@ -3,9 +3,9 @@
 
 // --- CONFIGURAÇÃO E DADOS DE SEED ---
 const SEED_USERS = [
-  { username: 'paulo', name: 'Paulo de Melo', role: 'admin', password: 'Jes0us2team9a' },
-  { username: 'julia', name: 'Julia de Araújo', role: 'admin', password: 'Jes0us2team9a' },
-  { username: 'direcao', name: 'Direção Escolar', role: 'admin', password: 'Jes0us2team9a' }
+  { username: 'paulo', name: 'Paulo de Melo', role: 'admin', password: 'Jes0us2team9a', tipo_usuario: 'administrador' },
+  { username: 'julia', name: 'Julia de Araújo', role: 'admin', password: 'Jes0us2team9a', tipo_usuario: 'administrador' },
+  { username: 'direcao', name: 'Direção Escolar', role: 'admin', password: 'Jes0us2team9a', tipo_usuario: 'administrador' }
 ];
 
 const SEED_PRE_REGISTERED = [];
@@ -21,6 +21,7 @@ const TURMAS_OPTIONS_HTML = `
   <option value="1º Ano Ensino Médio">1º Ano Ensino Médio</option>
   <option value="2º Ano Ensino Médio">2º Ano Ensino Médio</option>
   <option value="3º Ano Ensino Médio">3º Ano Ensino Médio</option>
+  <option value="Não sou aluno">Não sou aluno</option>
 `;
 
 const SEED_POLLS = [];
@@ -292,15 +293,23 @@ function migrateUserData() {
 
     // Garante a existência e configuração das 3 contas administrativas de produção
     const admins = [
-      { username: 'paulo', name: 'Paulo de Melo', role: 'admin', password: 'Jes0us2team9a', status: 'ativo' },
-      { username: 'julia', name: 'Julia de Araújo', role: 'admin', password: 'Jes0us2team9a', status: 'ativo' },
-      { username: 'direcao', name: 'Direção Escolar', role: 'admin', password: 'Jes0us2team9a', status: 'ativo' }
+      { username: 'paulo', name: 'Paulo de Melo', role: 'admin', password: 'Jes0us2team9a', status: 'ativo', tipo_usuario: 'administrador' },
+      { username: 'julia', name: 'Julia de Araújo', role: 'admin', password: 'Jes0us2team9a', status: 'ativo', tipo_usuario: 'administrador' },
+      { username: 'direcao', name: 'Direção Escolar', role: 'admin', password: 'Jes0us2team9a', status: 'ativo', tipo_usuario: 'administrador' }
     ];
 
     admins.forEach(admin => {
       const existingIdx = users.findIndex(u => u.username.toLowerCase() === admin.username.toLowerCase());
       if (existingIdx === -1) {
         users.push(admin);
+        modified = true;
+      }
+    });
+
+    // Garante compatibilidade normalizando contas sem o campo tipo_usuario
+    users.forEach(u => {
+      if (!u.tipo_usuario) {
+        u.tipo_usuario = u.role === 'admin' ? 'administrador' : 'aluno';
         modified = true;
       }
     });
@@ -499,6 +508,7 @@ function handleLogin(e) {
   e.preventDefault();
   const usernameInput = document.getElementById('login-username').value.trim();
   const passwordInput = document.getElementById('login-password').value;
+  const typeInput = document.getElementById('login-type').value;
 
   const users = DB.get('users', SEED_USERS);
   const hashedPassword = typeof sha256 !== 'undefined' ? sha256(passwordInput) : passwordInput;
@@ -513,6 +523,15 @@ function handleLogin(e) {
       return;
     }
 
+    // Normaliza tipo_usuario caso ainda não tenha (compatibilidade)
+    const userType = user.tipo_usuario || (user.role === 'admin' ? 'administrador' : 'aluno');
+    
+    // Se não for administrador, valida se o tipo de login coincide com o cadastro
+    if (userType !== 'administrador' && userType !== typeInput) {
+      showToast('Usuário ou senha incorretos.', 'error');
+      return;
+    }
+
     user.lastAccess = new Date().toISOString();
     DB.set('users', users);
 
@@ -520,6 +539,8 @@ function handleLogin(e) {
       username: user.username,
       name: user.name,
       role: user.role,
+      tipo_usuario: userType,
+      turma: user.turma || '',
       profilePic: user.profilePic || null
     };
     localStorage.setItem('inovando_session', JSON.stringify(currentUser));
@@ -1324,7 +1345,7 @@ function saveUser(e) {
   e.preventDefault();
   const username = document.getElementById('user-username').value.trim().toLowerCase();
   const name = document.getElementById('user-name').value.trim();
-  const role = document.getElementById('user-role').value;
+  const selectedType = document.getElementById('user-role').value;
   const password = document.getElementById('user-password').value;
 
   if (!username || !name || !password) {
@@ -1339,14 +1360,26 @@ function saveUser(e) {
     return;
   }
 
-  users.push({ username, name, role, password });
+  const hashedPassword = typeof sha256 !== 'undefined' ? sha256(password) : password;
+
+  users.push({
+    username,
+    name,
+    role: 'aluno',
+    tipo_usuario: selectedType,
+    password: hashedPassword,
+    turma: selectedType === 'aluno' ? '' : 'Não sou aluno',
+    status: 'ativo',
+    created_at: new Date().toISOString()
+  });
+
   DB.set('users', users);
   
   closeUserModal();
   showToast('Novo usuário cadastrado!');
   
-  if (currentView === 'admin') {
-    renderAdmin();
+  if (currentView === 'admin' || currentView === 'cadastro_manager') {
+    renderCadastroManager();
   }
 }
 
@@ -1504,10 +1537,22 @@ function renderAppDirect() {
           
           <form class="login-form" onsubmit="handleLogin(event)">
             <div class="form-group">
-              <label for="login-username">Login</label>
+              <label for="login-username">Login / Matrícula</label>
               <div class="input-wrapper">
                 <i data-lucide="user"></i>
                 <input type="text" id="login-username" placeholder="Digite seu login" required autofocus>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="login-type">Tipo de Usuário</label>
+              <div class="input-wrapper">
+                <i data-lucide="users" style="left: 16px; top: 50%; transform: translateY(-50%); z-index: 10;"></i>
+                <select id="login-type" class="filter-select" style="width: 100%; height: 50px; padding-left: 44px;" required>
+                  <option value="aluno" selected>Aluno</option>
+                  <option value="professor">Professor</option>
+                  <option value="funcionario">Funcionário</option>
+                </select>
               </div>
             </div>
             
@@ -1518,8 +1563,6 @@ function renderAppDirect() {
                 <input type="password" id="login-password" placeholder="Digite sua senha" required>
               </div>
             </div>
-
-
             
             <button type="submit" class="btn">
               <span>Entrar</span>
@@ -1646,7 +1689,7 @@ function renderAppDirect() {
             <div class="avatar" style="overflow: hidden; display: flex; justify-content: center; align-items: center;">${getUserAvatarHtml(currentUser)}</div>
             <div class="user-info">
               <span class="user-name" title="${currentUser.name}">${currentUser.name}</span>
-              <span class="user-role">${currentUser.role === 'admin' ? 'Administrador' : 'Aluno'}</span>
+              <span class="user-role">${{ 'aluno': 'Aluno', 'professor': 'Professor', 'funcionario': 'Funcionário', 'administrador': 'Administrador' }[currentUser.tipo_usuario] || (currentUser.role === 'admin' ? 'Administrador' : 'Aluno')}</span>
             </div>
           </div>
           <a class="menu-item-link" onclick="handleLogout()" style="color: var(--primary); border-color: var(--border-color); background-color: transparent;">
@@ -1925,6 +1968,10 @@ function renderSugestao() {
       </div>
     </div>
   `;
+  if (currentUser && currentUser.turma) {
+    const classEl = document.getElementById('sugestao-class');
+    if (classEl) classEl.value = currentUser.turma;
+  }
   lucide.createIcons();
 }
 
@@ -1997,7 +2044,84 @@ function renderReclamacao() {
       </div>
     </div>
   `;
+  if (currentUser && currentUser.turma) {
+    const classEl = document.getElementById('reclamacao-class');
+    if (classEl) classEl.value = currentUser.turma;
+  }
   lucide.createIcons();
+}
+
+function adjustElogioRecipientField() {
+  const destType = document.getElementById('elogio-dest-type').value;
+  const wrapper = document.getElementById('elogio-recipient-wrapper');
+  if (!wrapper) return;
+
+  const users = DB.get('users', SEED_USERS);
+
+  if (destType === 'professor') {
+    const professors = users.filter(u => u.tipo_usuario === 'professor');
+    if (professors.length === 0) {
+      wrapper.innerHTML = `
+        <label for="elogio-recipient">Selecione o Professor</label>
+        <div class="input-wrapper">
+          <i data-lucide="user" style="left: 16px; top: 50%; transform: translateY(-50%); z-index: 10;"></i>
+          <select id="elogio-recipient" class="filter-select" style="width: 100%; height: 50px; padding-left: 44px;" required>
+            <option value="" disabled selected>Nenhum professor cadastrado no sistema</option>
+          </select>
+        </div>
+      `;
+    } else {
+      const optionsHtml = professors.map(p => `<option value="${p.name}">${p.name}</option>`).join('');
+      wrapper.innerHTML = `
+        <label for="elogio-recipient">Selecione o Professor</label>
+        <div class="input-wrapper">
+          <i data-lucide="user" style="left: 16px; top: 50%; transform: translateY(-50%); z-index: 10;"></i>
+          <select id="elogio-recipient" class="filter-select" style="width: 100%; height: 50px; padding-left: 44px;" required>
+            <option value="" disabled selected>Selecione um professor...</option>
+            ${optionsHtml}
+          </select>
+        </div>
+      `;
+    }
+  } else if (destType === 'funcionario') {
+    const staff = users.filter(u => u.tipo_usuario === 'funcionario');
+    if (staff.length === 0) {
+      wrapper.innerHTML = `
+        <label for="elogio-recipient">Selecione o Funcionário</label>
+        <div class="input-wrapper">
+          <i data-lucide="user" style="left: 16px; top: 50%; transform: translateY(-50%); z-index: 10;"></i>
+          <select id="elogio-recipient" class="filter-select" style="width: 100%; height: 50px; padding-left: 44px;" required>
+            <option value="" disabled selected>Nenhum funcionário cadastrado no sistema</option>
+          </select>
+        </div>
+      `;
+    } else {
+      const optionsHtml = staff.map(s => `<option value="${s.name}">${s.name}</option>`).join('');
+      wrapper.innerHTML = `
+        <label for="elogio-recipient">Selecione o Funcionário</label>
+        <div class="input-wrapper">
+          <i data-lucide="user" style="left: 16px; top: 50%; transform: translateY(-50%); z-index: 10;"></i>
+          <select id="elogio-recipient" class="filter-select" style="width: 100%; height: 50px; padding-left: 44px;" required>
+            <option value="" disabled selected>Selecione um funcionário...</option>
+            ${optionsHtml}
+          </select>
+        </div>
+      `;
+    }
+  } else {
+    // Setor / Outros
+    wrapper.innerHTML = `
+      <label for="elogio-recipient">Nome do Setor Elogiado</label>
+      <div class="input-wrapper">
+        <i data-lucide="user"></i>
+        <input type="text" id="elogio-recipient" placeholder="Ex: Equipe de Limpeza, Cantina, Secretaria" required>
+      </div>
+    `;
+  }
+  
+  if (typeof lucide !== 'undefined' && lucide.createIcons) {
+    lucide.createIcons();
+  }
 }
 
 function renderElogio() {
@@ -2020,11 +2144,19 @@ function renderElogio() {
       <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 20px; padding: 30px; box-shadow: var(--card-shadow);">
         <form onsubmit="submitElogio(event)">
           <div class="form-group" style="margin-bottom: 20px;">
-            <label for="elogio-recipient">Nome da Pessoa ou Setor Elogiado</label>
+            <label for="elogio-dest-type">Tipo de Destinatário</label>
             <div class="input-wrapper">
-              <i data-lucide="user"></i>
-              <input type="text" id="elogio-recipient" placeholder="Ex: Prof. Carlos de História, Equipe de Limpeza, Cantina" required>
+              <i data-lucide="tag" style="left: 16px; top: 50%; transform: translateY(-50%); z-index: 10;"></i>
+              <select id="elogio-dest-type" class="filter-select" onchange="adjustElogioRecipientField()" style="width: 100%; height: 50px; padding-left: 44px;" required>
+                <option value="professor" selected>Professor</option>
+                <option value="funcionario">Funcionário</option>
+                <option value="setor">Setor / Outros</option>
+              </select>
             </div>
+          </div>
+
+          <div class="form-group" id="elogio-recipient-wrapper" style="margin-bottom: 20px;">
+            <!-- Inserido dinamicamente via adjustElogioRecipientField() -->
           </div>
 
           <div class="form-group" style="margin-bottom: 20px;">
@@ -2038,7 +2170,7 @@ function renderElogio() {
           <div class="form-group" style="margin-bottom: 20px;">
             <label for="elogio-class">Turma</label>
             <div class="input-wrapper">
-              <i data-lucide="graduation-cap" style="left: 16px;"></i>
+              <i data-lucide="graduation-cap" style="left: 16px; top: 50%; transform: translateY(-50%); z-index: 10;"></i>
               <select id="elogio-class" class="filter-select" style="width: 100%; height: 50px; padding-left: 44px;" required>
                 ${TURMAS_OPTIONS_HTML}
               </select>
@@ -2058,6 +2190,11 @@ function renderElogio() {
       </div>
     </div>
   `;
+  adjustElogioRecipientField();
+  if (currentUser && currentUser.turma) {
+    const classEl = document.getElementById('elogio-class');
+    if (classEl) classEl.value = currentUser.turma;
+  }
   lucide.createIcons();
 }
 
@@ -2720,9 +2857,16 @@ function renderSettings() {
           <div>
             <h4 style="font-size: 18px; font-weight: 700;">${currentUser.name}</h4>
             <p style="color: var(--text-secondary); font-size: 13px;">Login: <strong style="color: var(--text-main); font-family: monospace;">${currentUser.username}</strong></p>
-            <span class="badge ${currentUser.role === 'admin' ? 'reclamacao' : 'sugestao'}" style="margin-top: 8px; display: inline-block;">
-              Nível: ${currentUser.role === 'admin' ? 'Administrador' : 'Aluno'}
-            </span>
+            <div style="margin-top: 8px; display: flex; flex-direction: column; gap: 4px;">
+              <div>
+                <span class="badge ${currentUser.role === 'admin' ? 'reclamacao' : 'sugestao'}" style="display: inline-block;">
+                  Tipo: ${{ 'aluno': 'Aluno', 'professor': 'Professor', 'funcionario': 'Funcionário', 'administrador': 'Administrador' }[currentUser.tipo_usuario] || (currentUser.role === 'admin' ? 'Administrador' : 'Aluno')}
+                </span>
+              </div>
+              <p style="color: var(--text-secondary); font-size: 13px; margin-top: 2px;">
+                Turma: <strong style="color: var(--text-main);">${currentUser.tipo_usuario === 'aluno' ? (currentUser.turma || 'Não vinculada') : 'Não sou aluno'}</strong>
+              </p>
+            </div>
             <button class="btn btn-secondary" onclick="handleLogout()" style="margin-top: 12px; font-size: 12px; padding: 6px 12px; width: auto; display: flex; align-items: center; gap: 6px; border-color: var(--primary); color: var(--primary); background: transparent;">
               <i data-lucide="log-out" style="width: 14px; height: 14px;"></i> Sair da Conta
             </button>
@@ -3083,20 +3227,25 @@ function renderCadastro() {
               <input type="text" id="cadastro-name" placeholder="Digite seu nome completo" required autofocus>
             </div>
           </div>
+
+          <div class="form-group">
+            <label for="cadastro-type">Tipo de Usuário</label>
+            <div class="input-wrapper">
+              <i data-lucide="users" style="left: 16px; top: 50%; transform: translateY(-50%); z-index: 10;"></i>
+              <select id="cadastro-type" class="filter-select" style="width: 100%; height: 50px; padding-left: 44px;" onchange="adjustCadastroFields()" required>
+                <option value="aluno" selected>Aluno</option>
+                <option value="professor">Professor</option>
+                <option value="funcionario">Funcionário</option>
+              </select>
+            </div>
+          </div>
           
           <div class="form-group">
             <label for="cadastro-class">Turma</label>
             <div class="input-wrapper">
-              <i data-lucide="graduation-cap"></i>
-              <select id="cadastro-class" required>
-                <option value="" disabled selected>Selecione sua turma...</option>
-                <option value="6º Ano">6º Ano</option>
-                <option value="7º Ano">7º Ano</option>
-                <option value="8º Ano">8º Ano</option>
-                <option value="9º Ano">9º Ano</option>
-                <option value="1º Ano Ensino Médio">1º Ano Ensino Médio</option>
-                <option value="2º Ano Ensino Médio">2º Ano Ensino Médio</option>
-                <option value="3º Ano Ensino Médio">3º Ano Ensino Médio</option>
+              <i data-lucide="graduation-cap" style="left: 16px; top: 50%; transform: translateY(-50%); z-index: 10;"></i>
+              <select id="cadastro-class" class="filter-select" style="width: 100%; height: 50px; padding-left: 44px;" required>
+                ${TURMAS_OPTIONS_HTML}
               </select>
             </div>
           </div>
@@ -3126,13 +3275,26 @@ function renderCadastro() {
   lucide.createIcons();
 }
 
+function adjustCadastroFields() {
+  const typeSelect = document.getElementById('cadastro-type');
+  const classSelect = document.getElementById('cadastro-class');
+  if (!typeSelect || !classSelect) return;
+
+  if (typeSelect.value !== 'aluno') {
+    classSelect.value = 'Não sou aluno';
+  } else {
+    classSelect.value = '';
+  }
+}
+
 function handleCadastro(e) {
   e.preventDefault();
   const nomeInput = document.getElementById('cadastro-name').value.trim();
+  const typeInput = document.getElementById('cadastro-type').value;
   const turmaInput = document.getElementById('cadastro-class').value;
   const passwordInput = document.getElementById('cadastro-password').value;
 
-  if (!nomeInput || !turmaInput || !passwordInput) {
+  if (!nomeInput || !typeInput || !turmaInput || !passwordInput) {
     showToast('Por favor, preencha todos os campos.', 'error');
     return;
   }
@@ -3154,6 +3316,7 @@ function handleCadastro(e) {
     username: nomeInput, // O nome completo passa a ser a identificação
     name: nomeInput,
     role: 'aluno',
+    tipo_usuario: typeInput,
     password: hashedPassword,
     turma: turmaInput,
     status: 'ativo',
@@ -3163,7 +3326,7 @@ function handleCadastro(e) {
   users.push(newStudent);
   DB.set('users', users);
 
-  showToast(`Cadastro realizado com sucesso! Use seu Nome Completo para fazer login.`, 'success');
+  showToast(`Cadastro realizado com sucesso! Selecione seu tipo correspondente e faça login.`, 'success');
   navigateTo('login');
 }
 
@@ -3184,14 +3347,30 @@ function renderUserRowsHtml(filteredUsers) {
     const isBlocked = u.status === 'bloqueado';
     const escapedName = (u.name || '').replace(new RegExp("'", "g"), "\\'");
 
+    const typeUser = u.tipo_usuario || (u.role === 'admin' ? 'administrador' : 'aluno');
+    const typeLabelMap = {
+      'aluno': 'Aluno',
+      'professor': 'Professor',
+      'funcionario': 'Funcionário',
+      'administrador': 'Administrador'
+    };
+    const typeClassMap = {
+      'aluno': 'sugestao',
+      'professor': 'elogio',
+      'funcionario': 'status-pending',
+      'administrador': 'reclamacao'
+    };
+    const typeLabel = typeLabelMap[typeUser] || 'Aluno';
+    const typeClass = typeClassMap[typeUser] || 'sugestao';
+
     return `
       <tr>
         <td style="font-weight: 700;">${u.username}</td>
         <td>${u.name}</td>
         <td>${u.turma || 'N/A'}</td>
         <td>
-          <span class="badge ${u.role === 'admin' ? 'reclamacao' : 'sugestao'}" style="font-size: 9px;">
-            ${u.role === 'admin' ? 'Administrador' : 'Aluno'}
+          <span class="badge ${typeClass}" style="font-size: 9px;">
+            ${typeLabel}
           </span>
         </td>
         <td>${dateCadastro}</td>
@@ -3203,14 +3382,15 @@ function renderUserRowsHtml(filteredUsers) {
           </span>
         </td>
         <td>
-          ${isSelf ? `
+          ${(typeUser === 'administrador' || isSelf) ? `
             <select disabled style="height: 30px; font-size: 11px; padding: 0 8px; width: 130px; background: rgba(255,255,255,0.05); color: var(--text-secondary); border: 1px solid var(--border-color); border-radius: 6px; cursor: not-allowed;">
-              <option value="admin" selected>Administrador</option>
+              <option value="administrador" selected>Administrador</option>
             </select>
           ` : `
             <select onchange="changeUserRole('${u.username}', this.value)" style="height: 30px; font-size: 11px; padding: 0 8px; width: 130px; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer;">
-              <option value="aluno" ${u.role === 'aluno' ? 'selected' : ''}>Aluno</option>
-              <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Administrador</option>
+              <option value="aluno" ${typeUser === 'aluno' ? 'selected' : ''}>Aluno</option>
+              <option value="professor" ${typeUser === 'professor' ? 'selected' : ''}>Professor</option>
+              <option value="funcionario" ${typeUser === 'funcionario' ? 'selected' : ''}>Funcionário</option>
             </select>
           `}
         </td>
@@ -3649,7 +3829,7 @@ function toggleUserBlockStatus(username) {
   }
 }
 
-function changeUserRole(username, newRole) {
+function changeUserRole(username, newType) {
   try {
     const users = DB.get('users', SEED_USERS);
     const userIdx = users.findIndex(u => u.username.toLowerCase() === username.toLowerCase());
@@ -3659,43 +3839,53 @@ function changeUserRole(username, newRole) {
     }
 
     const user = users[userIdx];
-    const oldRole = user.role;
+    const oldType = user.tipo_usuario || (user.role === 'admin' ? 'administrador' : 'aluno');
 
-    if (oldRole === newRole) return; // Nenhuma alteração real
+    if (oldType === newType) return; // Nenhuma alteração real
 
-    // Se estiver rebaixando um administrador, certifique-se de que há pelo menos mais um admin
-    if (oldRole === 'admin' && newRole === 'aluno') {
-      const adminsCount = users.filter(u => u.role === 'admin').length;
-      if (adminsCount <= 1) {
-        showToast('Não é possível rebaixar o único administrador do sistema.', 'error');
-        // Re-renderiza para redefinir o seletor no DOM
-        if (currentView === 'cadastro_manager') renderCadastroManager();
-        else if (currentView === 'admin') renderAdmin();
-        return;
-      }
+    if (oldType === 'administrador') {
+      showToast('Não é permitido alterar o cargo de um administrador de sistema.', 'error');
+      if (currentView === 'cadastro_manager') renderCadastroManager();
+      else if (currentView === 'admin') renderAdmin();
+      return;
     }
 
-    const roleNameOld = oldRole === 'admin' ? 'Administrador' : 'Aluno';
-    const roleNameNew = newRole === 'admin' ? 'Administrador' : 'Aluno';
+    const labelMap = {
+      'aluno': 'Aluno',
+      'professor': 'Professor',
+      'funcionario': 'Funcionário',
+      'administrador': 'Administrador'
+    };
+    const oldTypeLabel = labelMap[oldType] || 'Aluno';
+    const newTypeLabel = labelMap[newType] || 'Aluno';
 
-    if (!confirm(`Tem certeza que deseja alterar o cargo de ${user.name} de ${roleNameOld} para ${roleNameNew}?`)) {
+    if (!confirm(`Tem certeza que deseja alterar o cargo deste usuário?\nDe: ${oldTypeLabel} -> Para: ${newTypeLabel}`)) {
       // Re-renderiza para desfazer a alteração visual no seletor do DOM
       if (currentView === 'cadastro_manager') renderCadastroManager();
       else if (currentView === 'admin') renderAdmin();
       return;
     }
 
-    user.role = newRole;
-    
+    user.tipo_usuario = newType;
+    user.role = 'aluno'; // Todos os novos tipos não-admins têm role 'aluno'
+
+    if (newType === 'professor' || newType === 'funcionario') {
+      user.turma = 'Não sou aluno';
+    } else if (newType === 'aluno' && user.turma === 'Não sou aluno') {
+      user.turma = '';
+    }
+
     // Se o usuário promovido/rebaixado for o usuário da sessão atual, atualiza a sessão
     if (currentUser && currentUser.username.toLowerCase() === username.toLowerCase()) {
-      currentUser.role = newRole;
+      currentUser.tipo_usuario = newType;
+      currentUser.role = 'aluno';
+      currentUser.turma = user.turma;
       localStorage.setItem('inovando_session', JSON.stringify(currentUser));
     }
 
     DB.set('users', users);
-    logAuditAction('Alterou cargo de usuário', `Usuário: ${user.name} (${user.username}) | Cargo antigo: ${roleNameOld} -> Novo: ${roleNameNew}`);
-    showToast(`Cargo de ${user.name} alterado para ${roleNameNew}!`);
+    logAuditAction('Alterou cargo de usuário', `Usuário: ${user.name} (${user.username}) | Cargo antigo: ${oldTypeLabel} -> Novo: ${newTypeLabel}`);
+    showToast(`Cargo de ${user.name} alterado para ${newTypeLabel}!`);
 
     // Recarrega a visualização atual
     if (currentView === 'cadastro_manager') {

@@ -13,8 +13,8 @@
   <!-- Estilos Globais e Customizados -->
   <link rel="stylesheet" href="style.css">
   
-  <!-- Lucide Icons CDN -->
-  <script src="https://unpkg.com/lucide@latest" defer></script>
+  <!-- Lucide Icons Local -->
+  <script src="lucide.min.js" defer></script>
 </head>
 <body>
 
@@ -101,8 +101,9 @@
         <div class="form-group">
           <label for="user-role">Função / Nível de Acesso</label>
           <select id="user-role" class="filter-select" style="width: 100%; height: 50px; padding-left: 15px;">
-            <option value="aluno">Aluno / Comunidade</option>
-            <option value="admin">Administrador / Coordenação</option>
+            <option value="aluno">Aluno</option>
+            <option value="professor">Professor</option>
+            <option value="funcionario">Funcionário</option>
           </select>
         </div>
 
@@ -236,9 +237,9 @@
     </div>
   </div>
 
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js" defer></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js" defer></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/js-sha256/0.9.0/sha256.min.js" defer></script>
+  <script src="firebase-app-compat.js" defer></script>
+  <script src="firebase-database-compat.js" defer></script>
+  <script src="sha256.min.js" defer></script>
   <script src="qrcode.js" defer></script>
   <script src="app.js" defer></script>
 
