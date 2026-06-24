@@ -82,9 +82,9 @@ function restoreDefaultLogo() {
 
 // --- GERENCIAMENTO DE ESTADO E SINCRONIZAÇÃO CENTRAL (FIREBASE) ---
 let firebaseEnabled = false;
-let firebaseConnState = localStorage.getItem('inovando_firebase_url') ? 'connecting' : 'offline';
+let firebaseConnState = 'connecting';
 let dbRef = null;
-let firebaseURL = localStorage.getItem('inovando_firebase_url') || '';
+const firebaseURL = 'https://ouvidoria-inovando-default-rtdb.firebaseio.com';
 
 // --- VARIÁVEIS DE ESTADO DA APLICAÇÃO E SESSÃO (Declaradas no topo para evitar erros de TDZ) ---
 let currentUser = safeJsonParse(localStorage.getItem('inovando_session'), null);
@@ -449,6 +449,17 @@ function healUserDatabase() {
 }
 
 // Funções de Inicialização e Sincronização
+let firebaseReconnectTimeout = null;
+function scheduleFirebaseReconnection() {
+  if (firebaseReconnectTimeout) {
+    clearTimeout(firebaseReconnectTimeout);
+  }
+  firebaseReconnectTimeout = setTimeout(() => {
+    console.log("Firebase Central DB: Tentando reconectar automaticamente...");
+    initFirebase();
+  }, 10000); // Tenta reconectar a cada 10 segundos
+}
+
 function initFirebase() {
   if (!firebaseURL) {
     firebaseEnabled = false;
@@ -488,6 +499,11 @@ function initFirebase() {
         const data = snapshot.val();
         if (data) {
           console.log("Firebase Central DB: Dados recebidos e sincronizados com sucesso.");
+          
+          if (firebaseReconnectTimeout) {
+            clearTimeout(firebaseReconnectTimeout);
+            firebaseReconnectTimeout = null;
+          }
           
           if (isFirstLoad) {
             // Mesclagem estruturada inicial
@@ -580,6 +596,7 @@ function initFirebase() {
       firebaseConnState = 'error';
       showToast("Falha na sincronização do banco. Operando no modo local.", "error");
       renderApp();
+      scheduleFirebaseReconnection();
     });
     
   } catch (err) {
@@ -587,6 +604,7 @@ function initFirebase() {
     firebaseEnabled = false;
     firebaseConnState = 'error';
     renderApp();
+    scheduleFirebaseReconnection();
   }
 }
 
@@ -3345,7 +3363,7 @@ function getFirebaseSettingsCardHtml() {
     <div class="settings-card">
       <h3>Banco de Dados Central (Sincronização)</h3>
       <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 15px; line-height: 1.5;">
-        Conecte a Ouvidoria a um banco de dados centralizado no Firebase para que enquetes e sugestões sejam compartilhadas e sincronizadas em tempo real em todos os celulares, tablets e computadores.
+        A Ouvidoria está conectada de forma permanente e automática ao banco de dados centralizado para que enquetes, sugestões e usuários sejam sincronizados em tempo real em todos os celulares, tablets e computadores.
       </p>
       
       <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 20px; font-size: 14px;">
@@ -3371,28 +3389,9 @@ function getFirebaseSettingsCardHtml() {
         </span>
       </div>
 
-      <form onsubmit="saveFirebaseConfig(event)" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 15px;">
-        <div class="form-group" style="margin-bottom: 0;">
-          <label for="firebase-db-url" style="font-size: 12px; font-weight: 700;">URL do Firebase Realtime Database</label>
-          <div class="input-wrapper">
-            <i data-lucide="database"></i>
-            <input type="url" id="firebase-db-url" value="${firebaseURL}" placeholder="https://seu-projeto-default-rtdb.firebaseio.com" required style="padding-left: 44px;">
-          </div>
-        </div>
-        <button type="submit" class="btn" style="width: auto; padding: 10px 20px; font-size: 13px; display: inline-flex; align-items: center; gap: 8px;">
-          <i data-lucide="link"></i> Conectar Banco Central
-        </button>
-      </form>
-
-      ${firebaseURL ? `
-        <button class="btn btn-secondary" onclick="disconnectFirebase()" style="width: auto; padding: 8px 16px; font-size: 12px; color: var(--reclamacao); border-color: var(--reclamacao); background: transparent; display: block; margin-bottom: 15px;">
-          Desconectar Banco Central
-        </button>
-      ` : ''}
-
-      ${firebaseConnState === 'error' && firebaseURL ? `
+      ${firebaseConnState === 'error' ? `
         <div style="margin-top: 15px; padding: 10px 15px; background: rgba(229, 62, 62, 0.1); border-left: 4px solid var(--reclamacao); border-radius: 4px; font-size: 12px; color: var(--text-main); line-height: 1.4;">
-          Não foi possível conectar ao Firebase. Verifique se a URL está correta e se a base de dados possui regras de leitura/escrita públicas no Firebase Console (Modo de Teste).
+          Não foi possível conectar ao Firebase. O sistema tentará reconectar automaticamente em instantes ou assim que a internet for reestabelecida.
         </div>
       ` : ''}
 
