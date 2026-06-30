@@ -96,6 +96,9 @@ let cadastroPreSearch = '';
 let currentCategoryFilter = 'all';
 let currentStatusFilter = 'all';
 let searchQuery = '';
+let currentModCategoryFilter = 'all';
+let currentModStatusFilter = 'pending';
+let modSearchQuery = '';
 let openCommentSections = [];
 let renderAppTimeout = null;
 
@@ -107,7 +110,8 @@ const LOCAL_CACHE = {
   pre_registered: safeJsonParse(localStorage.getItem('inovando_pre_registered'), SEED_PRE_REGISTERED),
   audit_logs: safeJsonParse(localStorage.getItem('inovando_audit_logs'), []),
   logo: localStorage.getItem('inovando_logo') || null,
-  theme: localStorage.getItem('inovando_theme') || 'light'
+  theme: localStorage.getItem('inovando_theme') || 'light',
+  deleted_ids: safeJsonParse(localStorage.getItem('inovando_deleted_ids'), {})
 };
 
 let localStorageWriteTimeout = null;
@@ -148,6 +152,15 @@ window.addEventListener('beforeunload', () => {
     }
   }
 });
+
+function registerDeletedId(id) {
+  if (!LOCAL_CACHE.deleted_ids) {
+    LOCAL_CACHE.deleted_ids = {};
+  }
+  LOCAL_CACHE.deleted_ids[id] = true;
+  syncCacheToLocalStorage();
+  saveToFirebase('deleted_ids', LOCAL_CACHE.deleted_ids);
+}
 
 const DB = {
   get: (key, fallback) => {
@@ -214,6 +227,48 @@ function recalculatePollVotes(poll) {
   }
 }
 
+function getPollDaysLeft(poll) {
+  if (!poll.creationDate) {
+    const idParts = poll.id.split('_');
+    const ts = (idParts.length > 1 && !isNaN(parseInt(idParts[1]))) ? parseInt(idParts[1]) : Date.now();
+    poll.creationDate = new Date(ts).toISOString();
+  }
+  if (!poll.expirationDate) {
+    const days = poll.daysLeft !== undefined ? poll.daysLeft : 7;
+    const ts = new Date(poll.creationDate).getTime();
+    poll.expirationDate = new Date(ts + days * 24 * 60 * 60 * 1000).toISOString();
+  }
+  
+  const now = new Date();
+  const exp = new Date(poll.expirationDate);
+  const diffTime = exp - now;
+  const diffDays = Math.ceil(diffTime / (24 * 60 * 60 * 1000));
+  
+  if (diffDays <= 0) {
+    if (poll.active) {
+      poll.active = false;
+      setTimeout(() => {
+        const polls = DB.get('polls', SEED_POLLS);
+        const index = polls.findIndex(p => p.id === poll.id);
+        if (index !== -1 && polls[index].active) {
+          polls[index].active = false;
+          DB.set('polls', polls);
+        }
+      }, 0);
+    }
+    return 0;
+  }
+  return diffDays;
+}
+
+function getPollStatusText(poll) {
+  if (!poll.active) return "Encerrada";
+  const days = getPollDaysLeft(poll);
+  if (days <= 0) return "Encerrada";
+  if (days === 1) return "Encerra em 1 dia";
+  return `Encerra em ${days} dias`;
+}
+
 function mergeUsers(fbUsers, localUsers) {
   const merged = [];
   const localList = Array.isArray(localUsers) ? localUsers : [];
@@ -250,8 +305,10 @@ function mergeManifestations(fbMans, localMans) {
   const merged = [];
   const localList = Array.isArray(localMans) ? localMans : [];
   const fbList = Array.isArray(fbMans) ? fbMans : [];
+  const deletedIds = LOCAL_CACHE.deleted_ids || {};
 
   fbList.forEach(fm => {
+    if (deletedIds[fm.id]) return;
     const lm = localList.find(m => m.id === fm.id);
     if (lm) {
       const mergedComments = [];
@@ -281,6 +338,7 @@ function mergeManifestations(fbMans, localMans) {
   });
 
   localList.forEach(lm => {
+    if (deletedIds[lm.id]) return;
     if (!merged.some(mm => mm.id === lm.id)) {
       merged.push(lm);
     }
@@ -293,8 +351,10 @@ function mergePolls(fbPolls, localPolls) {
   const merged = [];
   const localList = Array.isArray(localPolls) ? localPolls : [];
   const fbList = Array.isArray(fbPolls) ? fbPolls : [];
+  const deletedIds = LOCAL_CACHE.deleted_ids || {};
 
   fbList.forEach(fp => {
+    if (deletedIds[fp.id]) return;
     const lp = localList.find(p => p.id === fp.id);
     if (lp) {
       const mergedVotedUsers = { ...(fp.votedUsers || {}), ...(lp.votedUsers || {}) };
@@ -308,6 +368,7 @@ function mergePolls(fbPolls, localPolls) {
   });
 
   localList.forEach(lp => {
+    if (deletedIds[lp.id]) return;
     if (!merged.some(mp => mp.id === lp.id)) {
       recalculatePollVotes(lp);
       merged.push(lp);
@@ -381,6 +442,11 @@ function healUserDatabase() {
       
       // Ignore placeholder/special values
       if (lowerUsername === 'anônimo' || lowerUsername === 'anonimo' || lowerUsername === 'admin' || lowerUsername === 'anónimo') {
+        return;
+      }
+      
+      const deletedIds = LOCAL_CACHE.deleted_ids || {};
+      if (deletedIds[normalizedUsername] || deletedIds[lowerUsername]) {
         return;
       }
       
@@ -510,6 +576,8 @@ function initFirebase() {
           
           if (isFirstLoad) {
             // Mesclagem estruturada inicial
+            LOCAL_CACHE.deleted_ids = { ...(data.deleted_ids || {}), ...(LOCAL_CACHE.deleted_ids || {}) };
+
             LOCAL_CACHE.users = mergeUsers(data.users || [], LOCAL_CACHE.users || []);
             LOCAL_CACHE.manifestations = mergeManifestations(data.manifestations || [], LOCAL_CACHE.manifestations || []);
             LOCAL_CACHE.polls = mergePolls(data.polls || [], LOCAL_CACHE.polls || []);
@@ -548,10 +616,12 @@ function initFirebase() {
               pre_registered: LOCAL_CACHE.pre_registered,
               audit_logs: LOCAL_CACHE.audit_logs,
               logo: LOCAL_CACHE.logo || null,
-              theme: LOCAL_CACHE.theme
+              theme: LOCAL_CACHE.theme,
+              deleted_ids: LOCAL_CACHE.deleted_ids
             });
           } else {
             // Carregamento subsequente: aceita a versão do banco central
+            LOCAL_CACHE.deleted_ids = data.deleted_ids || {};
             LOCAL_CACHE.users = data.users || [];
             LOCAL_CACHE.manifestations = data.manifestations || [];
             LOCAL_CACHE.polls = data.polls || [];
@@ -584,7 +654,8 @@ function initFirebase() {
             pre_registered: LOCAL_CACHE.pre_registered,
             audit_logs: LOCAL_CACHE.audit_logs,
             logo: LOCAL_CACHE.logo || null,
-            theme: LOCAL_CACHE.theme
+            theme: LOCAL_CACHE.theme,
+            deleted_ids: LOCAL_CACHE.deleted_ids || null
           });
         }
       } catch (err) {
@@ -843,7 +914,7 @@ function navigateTo(view) {
   const isAdmin = currentUser && currentUser.role === 'admin';
   if (!currentUser && view !== 'login' && view !== 'cadastro') {
     currentView = 'login';
-  } else if (currentUser && (view === 'admin' || view === 'cadastro_manager') && !isAdmin) {
+  } else if (currentUser && (view === 'admin' || view === 'cadastro_manager' || view === 'moderacao') && !isAdmin) {
     currentView = 'home';
   } else {
     currentView = view;
@@ -939,7 +1010,6 @@ function submitReclamacao(e) {
   const location = document.getElementById('reclamacao-location').value.trim();
   const turma = document.getElementById('reclamacao-class').value.trim();
   const description = document.getElementById('reclamacao-desc').value.trim();
-  const isAnonymous = document.getElementById('reclamacao-anon').checked;
 
   if (!title || !location || !description || !turma) {
     showToast('Por favor, preencha todos os campos.', 'error');
@@ -952,7 +1022,7 @@ function submitReclamacao(e) {
     location,
     turma,
     description,
-    author: isAnonymous ? 'Anônimo' : currentUser.name,
+    author: currentUser.name,
     authorUsername: currentUser.username
   });
 }
@@ -986,6 +1056,7 @@ function saveManifestation(data) {
     id: 'man_' + Date.now(),
     date: new Date().toISOString(),
     status: 'pending',
+    moderationStatus: (currentUser && currentUser.role === 'admin') ? 'approved' : 'pending',
     ...data
   };
 
@@ -1285,6 +1356,7 @@ function deleteManifestation(id) {
     const manifestations = DB.get('manifestations', SEED_MANIFESTATIONS);
     const filtered = manifestations.filter(m => m.id !== id);
     DB.set('manifestations', filtered);
+    registerDeletedId(id);
     showToast('Manifestação excluída com sucesso.');
     renderOuvidoria();
   } catch (err) {
@@ -1602,18 +1674,25 @@ function savePoll(e) {
         polls[index].question = question;
         polls[index].options = options;
         polls[index].daysLeft = daysLeft;
+        polls[index].creationDate = new Date().toISOString();
+        polls[index].expirationDate = new Date(Date.now() + daysLeft * 24 * 60 * 60 * 1000).toISOString();
+        polls[index].active = true;
         DB.set('polls', polls);
         logAuditAction('Editou enquete', question);
         showToast('Enquete atualizada!');
       }
     } else {
+      const creationDate = new Date().toISOString();
+      const expirationDate = new Date(Date.now() + daysLeft * 24 * 60 * 60 * 1000).toISOString();
       const newPoll = {
         id: 'poll_' + Date.now(),
         question,
         options,
         votedUsers: {},
         active: true,
-        daysLeft: daysLeft
+        daysLeft: daysLeft,
+        creationDate,
+        expirationDate
       };
       polls.unshift(newPoll);
       DB.set('polls', polls);
@@ -2107,6 +2186,12 @@ function renderAppDirect() {
               </a>
             </li>
             <li>
+              <a class="menu-item-link ${currentView === 'moderacao' ? 'active' : ''}" onclick="navigateTo('moderacao')">
+                <i data-lucide="inbox"></i>
+                <span>Central de Moderação</span>
+              </a>
+            </li>
+            <li>
               <a class="menu-item-link ${currentView === 'cadastro_manager' ? 'active' : ''}" onclick="navigateTo('cadastro_manager')">
                 <i data-lucide="users-round"></i>
                 <span>Gerenciar Cadastros</span>
@@ -2166,6 +2251,10 @@ function renderAppDirect() {
       break;
     case 'cadastro_manager':
       if (isAdmin) renderCadastroManager();
+      else navigateTo('home');
+      break;
+    case 'moderacao':
+      if (isAdmin) renderModeracao();
       else navigateTo('home');
       break;
     case 'settings':
@@ -2282,7 +2371,7 @@ function renderHome() {
                 </div>
                 <div class="poll-meta-item red-date">
                   <i data-lucide="calendar" style="width:14px; height:14px;"></i>
-                  <span>Encerra em ${poll.daysLeft || 7} dias</span>
+                  <span>${getPollStatusText(poll)}</span>
                 </div>
               </div>
 
@@ -2468,16 +2557,7 @@ function renderReclamacao() {
             <textarea id="reclamacao-desc" placeholder="Descreva o problema observado de forma clara. Diga o que ocorreu e o que precisa ser corrigido." required style="min-height: 120px; padding-left: 16px;"></textarea>
           </div>
 
-          <div class="toggle-switch-container" style="margin-bottom: 25px;">
-            <div class="switch-label-group">
-              <span class="switch-title">Enviar Anonimamente</span>
-              <span class="switch-desc">Seu nome não será exibido na manifestação</span>
-            </div>
-            <label class="switch">
-              <input type="checkbox" id="reclamacao-anon">
-              <span class="slider"></span>
-            </label>
-          </div>
+
 
           <button type="submit" class="btn">
             <i data-lucide="send"></i>
@@ -2659,6 +2739,18 @@ function renderManifestationsListHtml(filteredItems, isAdmin) {
     const sortedComments = [...comments].sort((a, b) => (b.likedBy || []).length - (a.likedBy || []).length);
     const isCommentsOpen = openCommentSections.includes(item.id);
 
+    let authorHtml = `Autor: ${item.author}`;
+    let turmaHtml = item.turma ? `<span class="meta-item"><i data-lucide="graduation-cap"></i> Turma: ${item.turma}</span>` : '';
+
+    if (item.category === 'reclamacao') {
+      if (isAdmin) {
+        authorHtml = `Autor: ${item.author} (Login: ${item.authorUsername || 'N/A'})`;
+      } else {
+        authorHtml = `Autor: Anônimo (Confidencial)`;
+        turmaHtml = '';
+      }
+    }
+
     return `
       <article class="manifestation-item" style="display: flex; flex-direction: column; gap: 15px;">
         <div class="manifestation-card-body">
@@ -2671,9 +2763,9 @@ function renderManifestationsListHtml(filteredItems, isAdmin) {
             <p style="margin-bottom: 15px;">${item.description}</p>
             
             <div class="manifestation-meta">
-              <span class="meta-item"><i data-lucide="user"></i> Autor: ${item.author}</span>
+              <span class="meta-item"><i data-lucide="user"></i> ${authorHtml}</span>
               <span class="meta-item"><i data-lucide="calendar"></i> ${formatDate(item.date)}</span>
-              ${item.turma ? `<span class="meta-item"><i data-lucide="graduation-cap"></i> Turma: ${item.turma}</span>` : ''}
+              ${turmaHtml}
               ${item.subcategory ? `<span class="meta-item"><i data-lucide="tag"></i> Categoria: ${item.subcategory}</span>` : ''}
               ${item.location ? `<span class="meta-item"><i data-lucide="map-pin"></i> Local: ${item.location}</span>` : ''}
               ${item.recipient ? `<span class="meta-item"><i data-lucide="award"></i> Elogiado: ${item.recipient}</span>` : ''}
@@ -2782,13 +2874,17 @@ function renderOuvidoria() {
   const isAdmin = currentUser.role === 'admin';
 
   const filteredItems = manifestations.filter(item => {
+    if (!item.moderationStatus) {
+      item.moderationStatus = 'approved';
+    }
     const matchCategory = currentCategoryFilter === 'all' || item.category === currentCategoryFilter;
     const matchStatus = currentStatusFilter === 'all' || item.status === currentStatusFilter;
     const matchSearch = item.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
                         item.description.toLowerCase().includes(searchQuery.toLowerCase());
     
+    const isApproved = item.moderationStatus === 'approved';
     const isOwnerOrAdmin = isAdmin || item.authorUsername === currentUser.username || item.author === 'Anônimo';
-    return matchCategory && matchStatus && matchSearch && isOwnerOrAdmin;
+    return matchCategory && matchStatus && matchSearch && isApproved && isOwnerOrAdmin;
   });
 
   const listContainer = document.getElementById('manifestations-list-container');
@@ -2855,6 +2951,192 @@ function renderOuvidoria() {
   safeCreateIcons();
 }
 
+function renderModeracao() {
+  const container = document.getElementById('main-content-area');
+  const manifestations = DB.get('manifestations', SEED_MANIFESTATIONS);
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  if (!isAdmin) {
+    navigateTo('home');
+    return;
+  }
+
+  const filteredItems = manifestations.filter(item => {
+    if (!item.moderationStatus) {
+      item.moderationStatus = 'approved';
+    }
+
+    const matchCategory = currentModCategoryFilter === 'all' || item.category === currentModCategoryFilter;
+    const matchStatus = currentModStatusFilter === 'all' || item.moderationStatus === currentModStatusFilter;
+    const matchSearch = item.title.toLowerCase().includes(modSearchQuery.toLowerCase()) || 
+                        item.description.toLowerCase().includes(modSearchQuery.toLowerCase());
+                        
+    return matchCategory && matchStatus && matchSearch;
+  });
+
+  const listContainer = document.getElementById('moderacao-list-container');
+  if (listContainer) {
+    listContainer.innerHTML = renderModeracaoListHtml(filteredItems);
+    safeCreateIcons();
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="top-bar" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-color); padding-bottom:20px; margin-bottom:25px;">
+      <div class="page-title">
+        <h1 style="font-size:26px; font-weight:800; letter-spacing:-0.5px;">Central de Moderação</h1>
+        <p style="font-size:14px; color:var(--text-secondary); margin-top:4px;">Analise, aprove ou rejeite as participações enviadas pelos alunos</p>
+      </div>
+    </div>
+
+    <div class="filter-bar">
+      <div class="filter-group">
+        <div>
+          <label style="font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; display: block; margin-bottom: 4px;">Categoria</label>
+          <select class="filter-select" onchange="currentModCategoryFilter = this.value; renderModeracao()">
+            <option value="all" ${currentModCategoryFilter === 'all' ? 'selected' : ''}>Todas</option>
+            <option value="sugestao" ${currentModCategoryFilter === 'sugestao' ? 'selected' : ''}>Sugestões</option>
+            <option value="reclamacao" ${currentModCategoryFilter === 'reclamacao' ? 'selected' : ''}>Reclamações</option>
+            <option value="elogio" ${currentModCategoryFilter === 'elogio' ? 'selected' : ''}>Elogios</option>
+          </select>
+        </div>
+
+        <div>
+          <label style="font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; display: block; margin-bottom: 4px;">Status Moderação</label>
+          <select class="filter-select" onchange="currentModStatusFilter = this.value; renderModeracao()">
+            <option value="all" ${currentModStatusFilter === 'all' ? 'selected' : ''}>Todos</option>
+            <option value="pending" ${currentModStatusFilter === 'pending' ? 'selected' : ''}>Em análise</option>
+            <option value="approved" ${currentModStatusFilter === 'approved' ? 'selected' : ''}>Aprovados</option>
+            <option value="rejected" ${currentModStatusFilter === 'rejected' ? 'selected' : ''}>Rejeitados</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="search-input-wrapper">
+        <i data-lucide="search"></i>
+        <input type="text" placeholder="Buscar na moderação..." value="${modSearchQuery}" oninput="modSearchQuery = this.value; renderModeracao()">
+      </div>
+    </div>
+
+    <div id="moderacao-list-container" class="manifestations-list">
+      ${renderModeracaoListHtml(filteredItems)}
+    </div>
+  `;
+  safeCreateIcons();
+}
+
+function renderModeracaoListHtml(filteredItems) {
+  if (filteredItems.length === 0) {
+    return `
+      <div style="text-align: center; padding: 60px 20px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 20px; color: var(--text-secondary);">
+        <i data-lucide="inbox" style="font-size: 48px; margin-bottom: 15px; color: var(--primary);"></i>
+        <h3>Nenhum item encontrado na Central de Moderação</h3>
+      </div>
+    `;
+  }
+
+  return filteredItems.map(item => {
+    const catBadge = item.category === 'sugestao' ? 'Sugestão' : item.category === 'reclamacao' ? 'Reclamação' : 'Elogio';
+    
+    let modBadge = 'Em análise';
+    let modClass = 'status-pending';
+    if (item.moderationStatus === 'approved') {
+      modBadge = 'Aprovado';
+      modClass = 'status-resolved';
+    } else if (item.moderationStatus === 'rejected') {
+      modBadge = 'Rejeitado';
+      modClass = 'status-pending';
+    }
+
+    const comments = item.comments || [];
+    let authorText = `Autor: ${item.author} (Login: ${item.authorUsername || 'N/A'})`;
+    let turmaText = item.turma ? `<span class="meta-item"><i data-lucide="graduation-cap"></i> Turma: ${item.turma}</span>` : '';
+
+    return `
+      <article class="manifestation-item" style="display: flex; flex-direction: column; gap: 15px;">
+        <div class="manifestation-card-body">
+          <div class="manifestation-content">
+            <div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">
+              <span class="badge ${item.category}">${catBadge}</span>
+              <span class="badge ${modClass}">${modBadge}</span>
+              <span class="badge status-${item.status}">${item.status === 'pending' ? 'Pendente' : item.status === 'analysis' ? 'Em Análise' : 'Resolvido'}</span>
+            </div>
+            <h3>${item.title}</h3>
+            <p style="margin-bottom: 15px;">${item.description}</p>
+            
+            <div class="manifestation-meta">
+              <span class="meta-item"><i data-lucide="user"></i> ${authorText}</span>
+              <span class="meta-item"><i data-lucide="calendar"></i> ${formatDate(item.date)}</span>
+              ${turmaText}
+              ${item.subcategory ? `<span class="meta-item"><i data-lucide="tag"></i> Categoria: ${item.subcategory}</span>` : ''}
+              ${item.location ? `<span class="meta-item"><i data-lucide="map-pin"></i> Local: ${item.location}</span>` : ''}
+              ${item.recipient ? `<span class="meta-item"><i data-lucide="award"></i> Elogiado: ${item.recipient}</span>` : ''}
+            </div>
+
+            <div style="display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap;">
+              ${item.moderationStatus !== 'approved' ? `
+                <button class="btn" style="background: var(--elogio); color: white; width: auto; padding: 8px 16px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; border: none; border-radius: 10px;" onclick="moderateItem('${item.id}', 'approved')">
+                  <i data-lucide="check-circle" style="width:14px; height:14px;"></i> Aprovar e Publicar
+                </button>
+              ` : ''}
+              
+              ${item.moderationStatus !== 'rejected' ? `
+                <button class="btn" style="background: #E53E3E; color: white; width: auto; padding: 8px 16px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; border: none; border-radius: 10px;" onclick="moderateItem('${item.id}', 'rejected')">
+                  <i data-lucide="x-circle" style="width:14px; height:14px;"></i> Rejeitar
+                </button>
+              ` : ''}
+
+              ${item.moderationStatus === 'rejected' ? `
+                <button class="btn btn-secondary" style="color: var(--text-secondary); border-color: var(--border-color); width: auto; padding: 8px 16px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px;" onclick="moderateItem('${item.id}', 'pending')">
+                  <i data-lucide="archive" style="width:14px; height:14px;"></i> Voltar para Análise
+                </button>
+                <button class="btn" style="background: var(--primary-dark); color: white; width: auto; padding: 8px 16px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; border: none; border-radius: 10px;" onclick="deleteManifestationFromMod('${item.id}')">
+                  <i data-lucide="trash-2" style="width:14px; height:14px;"></i> Excluir Definitivamente
+                </button>
+              ` : ''}
+            </div>
+          </div>
+        </div>
+      </article>
+    `;
+  }).join('');
+}
+
+function moderateItem(id, status) {
+  try {
+    const manifestations = DB.get('manifestations', SEED_MANIFESTATIONS);
+    const index = manifestations.findIndex(m => m.id === id);
+    if (index !== -1) {
+      manifestations[index].moderationStatus = status;
+      DB.set('manifestations', manifestations);
+      
+      const statusMsg = status === 'approved' ? 'aprovada e publicada na Ouvidoria!' : status === 'rejected' ? 'rejeitada!' : 'arquivada!';
+      showToast(`Participação ${statusMsg}`);
+      renderModeracao();
+    }
+  } catch (err) {
+    console.error("moderateItem Error:", err);
+    showToast("Erro ao moderar item.", "error");
+  }
+}
+
+function deleteManifestationFromMod(id) {
+  if (confirm("Tem certeza de que deseja excluir permanentemente esta manifestação da moderação?")) {
+    try {
+      const manifestations = DB.get('manifestations', SEED_MANIFESTATIONS);
+      const filtered = manifestations.filter(m => m.id !== id);
+      DB.set('manifestations', filtered);
+      
+      registerDeletedId(id);
+      
+      showToast("Manifestação excluída definitivamente.");
+      renderModeracao();
+    } catch (err) {
+      console.error("deleteManifestationFromMod Error:", err);
+      showToast("Erro ao excluir manifestação.", "error");
+    }
+  }
+}
+
 function renderEnquetes() {
   const container = document.getElementById('main-content-area');
   const polls = DB.get('polls', SEED_POLLS);
@@ -2889,7 +3171,7 @@ function renderEnquetes() {
               <span class="badge ${poll.active ? 'status-resolved' : 'status-pending'}" style="font-size: 9px;">
                 ${poll.active ? 'Ativa' : 'Encerrada'}
               </span>
-              <span style="font-size: 11px; color: var(--text-secondary); font-weight: 700;">Encerra em ${poll.daysLeft || 7} dias</span>
+              <span style="font-size: 11px; color: var(--text-secondary); font-weight: 700;">${getPollStatusText(poll)}</span>
             </div>
             <h4 style="min-height: auto; margin-bottom: 15px;">${poll.question}</h4>
             
@@ -3238,6 +3520,7 @@ function deletePoll(pollId) {
     const question = poll ? poll.question : pollId;
     const filtered = polls.filter(p => p.id !== pollId);
     DB.set('polls', filtered);
+    registerDeletedId(pollId);
     logAuditAction('Excluiu enquete', question);
     showToast('Enquete excluída.');
     renderEnquetes();
