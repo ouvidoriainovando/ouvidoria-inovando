@@ -2882,9 +2882,8 @@ function renderOuvidoria() {
     const matchSearch = item.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
                         item.description.toLowerCase().includes(searchQuery.toLowerCase());
     
-    const isApproved = item.moderationStatus === 'approved';
-    const isOwnerOrAdmin = isAdmin || item.authorUsername === currentUser.username || item.author === 'Anônimo';
-    return matchCategory && matchStatus && matchSearch && isApproved && isOwnerOrAdmin;
+    const isVisible = (item.moderationStatus === 'approved') || (item.authorUsername === currentUser.username) || isAdmin;
+    return matchCategory && matchStatus && matchSearch && isVisible;
   });
 
   const listContainer = document.getElementById('manifestations-list-container');
