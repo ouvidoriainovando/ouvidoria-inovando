@@ -190,6 +190,30 @@
     </div>
   </div>
 
+  <!-- Modal de Mensagem de Sucesso (Moderação) -->
+  <div id="success-modal" class="modal-overlay">
+    <div class="modal-card" style="max-width: 440px; text-align: center; padding: 25px;">
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 15px;">
+        <div style="width: 56px; height: 56px; border-radius: 50%; background: rgba(56, 161, 105, 0.1); color: #38A169; display: flex; justify-content: center; align-items: center; font-size: 24px;">
+          <i data-lucide="check-circle" style="width: 32px; height: 32px;"></i>
+        </div>
+        <h3 style="font-size: 20px; font-weight: 800; color: var(--text-main); margin-top: 5px;">Recebemos sua mensagem com sucesso!</h3>
+        <p style="color: var(--text-secondary); font-size: 14px; line-height: 1.5; margin-bottom: 5px;">
+          Sua mensagem será analisada pelos administradores antes de ser publicada.
+        </p>
+        <p style="color: var(--text-secondary); font-size: 13px; line-height: 1.5; font-style: italic; background: var(--bg-body); padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); width: 100%;">
+          Após a aprovação, ela poderá aparecer na Ouvidoria em aproximadamente <strong>3 a 7 dias</strong>.
+        </p>
+        <p style="color: var(--text-secondary); font-size: 14px; line-height: 1.5;">
+          Obrigado por contribuir para a melhoria da nossa escola!
+        </p>
+        <button class="btn" onclick="closeSuccessModal()" style="width: 100%; margin-top: 10px;">
+          Entendido
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- 5. Modal de Edição de Manifestações (Administrador) -->
   <div id="manifestation-modal" class="modal-overlay">
     <div class="modal-card">

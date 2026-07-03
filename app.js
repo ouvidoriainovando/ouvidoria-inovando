@@ -273,9 +273,11 @@ function mergeUsers(fbUsers, localUsers) {
   const merged = [];
   const localList = Array.isArray(localUsers) ? localUsers : [];
   const fbList = Array.isArray(fbUsers) ? fbUsers : [];
+  const deletedIds = LOCAL_CACHE.deleted_ids || {};
 
   fbList.forEach(fu => {
     if (!fu || !fu.username) return;
+    if (deletedIds[fu.username] || deletedIds[fu.username.toLowerCase()]) return;
     const lu = localList.find(u => u && u.username && u.username.toLowerCase() === fu.username.toLowerCase());
     if (lu) {
       const mergedUser = { ...lu, ...fu };
@@ -293,6 +295,7 @@ function mergeUsers(fbUsers, localUsers) {
 
   localList.forEach(lu => {
     if (!lu || !lu.username) return;
+    if (deletedIds[lu.username] || deletedIds[lu.username.toLowerCase()]) return;
     if (!merged.some(mu => mu && mu.username && mu.username.toLowerCase() === lu.username.toLowerCase())) {
       merged.push(lu);
     }
@@ -308,7 +311,10 @@ function mergeManifestations(fbMans, localMans) {
   const deletedIds = LOCAL_CACHE.deleted_ids || {};
 
   fbList.forEach(fm => {
+    if (!fm || !fm.id) return;
     if (deletedIds[fm.id]) return;
+    if (fm.authorUsername && (deletedIds[fm.authorUsername] || deletedIds[fm.authorUsername.toLowerCase()])) return;
+    
     const lm = localList.find(m => m.id === fm.id);
     if (lm) {
       const mergedComments = [];
@@ -316,6 +322,10 @@ function mergeManifestations(fbMans, localMans) {
       const lmComments = lm.comments || [];
       
       fmComments.forEach(fc => {
+        if (!fc || !fc.id) return;
+        if (deletedIds[fc.id]) return;
+        if (fc.authorUsername && (deletedIds[fc.authorUsername] || deletedIds[fc.authorUsername.toLowerCase()])) return;
+        
         const lc = lmComments.find(c => c.id === fc.id);
         if (lc) {
           const mergedLikes = [...new Set([...(fc.likedBy || []), ...(lc.likedBy || [])])];
@@ -326,6 +336,10 @@ function mergeManifestations(fbMans, localMans) {
       });
       
       lmComments.forEach(lc => {
+        if (!lc || !lc.id) return;
+        if (deletedIds[lc.id]) return;
+        if (lc.authorUsername && (deletedIds[lc.authorUsername] || deletedIds[lc.authorUsername.toLowerCase()])) return;
+        
         if (!mergedComments.some(mc => mc.id === lc.id)) {
           mergedComments.push(lc);
         }
@@ -338,7 +352,10 @@ function mergeManifestations(fbMans, localMans) {
   });
 
   localList.forEach(lm => {
+    if (!lm || !lm.id) return;
     if (deletedIds[lm.id]) return;
+    if (lm.authorUsername && (deletedIds[lm.authorUsername] || deletedIds[lm.authorUsername.toLowerCase()])) return;
+    
     if (!merged.some(mm => mm.id === lm.id)) {
       merged.push(lm);
     }
@@ -1050,6 +1067,21 @@ function submitElogio(e) {
   });
 }
 
+function openSuccessModal() {
+  const modal = document.getElementById('success-modal');
+  if (modal) {
+    modal.classList.add('active');
+    safeCreateIcons();
+  }
+}
+
+function closeSuccessModal() {
+  const modal = document.getElementById('success-modal');
+  if (modal) {
+    modal.classList.remove('active');
+  }
+}
+
 function saveManifestation(data) {
   const manifestations = DB.get('manifestations', SEED_MANIFESTATIONS);
   const newManifestation = {
@@ -1063,7 +1095,11 @@ function saveManifestation(data) {
   manifestations.unshift(newManifestation);
   DB.set('manifestations', manifestations);
 
-  showToast('Sua participação foi registrada com sucesso. Obrigado por contribuir com a Escola Inove!', 'success');
+  if (currentUser && currentUser.role !== 'admin') {
+    openSuccessModal();
+  } else {
+    showToast('Sua participação foi registrada com sucesso. Obrigado por contribuir com a Escola Inove!', 'success');
+  }
   navigateTo('ouvidoria');
 }
 
@@ -1177,6 +1213,7 @@ function deleteComment(manifestationId, commentId) {
     if (item && item.comments) {
       item.comments = item.comments.filter(c => c.id !== commentId);
       DB.set('manifestations', manifestations);
+      registerDeletedId(commentId);
       showToast('Comentário excluído com sucesso.');
       renderOuvidoria();
     }
@@ -1842,6 +1879,7 @@ function confirmDeleteUser() {
   } else {
     // 1. Remover cadastro do usuário
     DB.set('users', filtered);
+    registerDeletedId(userToDelete);
 
     // 2. Remover todos os votos vinculados a esse usuário e recalcular
     try {
@@ -1860,6 +1898,14 @@ function confirmDeleteUser() {
     // 3. Remover todas as manifestações (sugestões, elogios, reclamações) e comentários/likes do usuário
     try {
       const manifestations = DB.get('manifestations', SEED_MANIFESTATIONS);
+      
+      // Registra IDs das manifestações excluídas em deleted_ids
+      manifestations.forEach(m => {
+        if (m.authorUsername === userToDelete) {
+          registerDeletedId(m.id);
+        }
+      });
+
       const filteredManifestations = manifestations.filter(m => m.authorUsername !== userToDelete);
       
       filteredManifestations.forEach(m => {
@@ -2751,6 +2797,38 @@ function renderManifestationsListHtml(filteredItems, isAdmin) {
       }
     }
 
+    let moderationNoticeHtml = '';
+    if (currentUser && item.authorUsername === currentUser.username) {
+      if (item.moderationStatus === 'pending') {
+        moderationNoticeHtml = `
+          <div class="moderation-notice-box" style="background-color: rgba(254, 252, 191, 0.15); border: 1.5px solid #ECC94B; border-radius: 12px; padding: 12px 16px; margin-top: 5px; margin-bottom: 15px; font-size: 13px; color: var(--text-main); display: flex; flex-direction: column; gap: 6px;">
+            <span style="font-weight: 700; color: #B7791F; display: flex; align-items: center; gap: 6px;">
+              <i data-lucide="info" style="width:16px; height:16px;"></i> 🟡 Em análise – Sua mensagem está sendo analisada pela Coordenação e pelos Administradores.
+            </span>
+            <span style="font-size: 12px; color: var(--text-secondary); line-height: 1.4;">
+              Sua mensagem foi recebida com sucesso e está sendo analisada pela Coordenação e pelos Administradores da Ouvidoria. Esse processo pode levar aproximadamente de 3 a 7 dias. Agradecemos sua colaboração para melhorar nossa escola.
+            </span>
+          </div>
+        `;
+      } else if (item.moderationStatus === 'rejected') {
+        moderationNoticeHtml = `
+          <div class="moderation-notice-box" style="background-color: rgba(254, 215, 215, 0.15); border: 1.5px solid #FEB2B2; border-radius: 12px; padding: 12px 16px; margin-top: 5px; margin-bottom: 15px; font-size: 13px; color: var(--text-main); display: flex; flex-direction: column; gap: 6px;">
+            <span style="font-weight: 700; color: #C53030; display: flex; align-items: center; gap: 6px;">
+              <i data-lucide="x-circle" style="width:16px; height:16px;"></i> 🔴 Rejeitada – Sua mensagem não foi aprovada pela equipe de moderação.
+            </span>
+          </div>
+        `;
+      } else if (item.moderationStatus === 'approved') {
+        moderationNoticeHtml = `
+          <div class="moderation-notice-box" style="background-color: rgba(235, 248, 255, 0.15); border: 1.5px solid #90CDF4; border-radius: 12px; padding: 12px 16px; margin-top: 5px; margin-bottom: 15px; font-size: 13px; color: var(--text-main); display: flex; flex-direction: column; gap: 6px;">
+            <span style="font-weight: 700; color: #2B6CB0; display: flex; align-items: center; gap: 6px;">
+              <i data-lucide="check-circle" style="width:16px; height:16px;"></i> 🔵 Aprovada – Sua mensagem foi aprovada e já está publicada na Ouvidoria.
+            </span>
+          </div>
+        `;
+      }
+    }
+
     return `
       <article class="manifestation-item" style="display: flex; flex-direction: column; gap: 15px;">
         <div class="manifestation-card-body">
@@ -2761,6 +2839,7 @@ function renderManifestationsListHtml(filteredItems, isAdmin) {
             </div>
             <h3>${item.title}</h3>
             <p style="margin-bottom: 15px;">${item.description}</p>
+            ${moderationNoticeHtml}
             
             <div class="manifestation-meta">
               <span class="meta-item"><i data-lucide="user"></i> ${authorHtml}</span>
